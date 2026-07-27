@@ -18,3 +18,5 @@ broadcast/
 
 *.log
 .DS_Store
+
+.vscode/
