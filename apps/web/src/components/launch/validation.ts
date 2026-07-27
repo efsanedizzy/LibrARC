@@ -1,5 +1,6 @@
-import type { LaunchFieldName, LaunchFormErrors, LaunchFormValues, LaunchStep } from "./types";
-import { stepFields } from "./types";
+import { isAddress } from "viem";
+
+import type { LaunchFieldName, LaunchFormErrors, LaunchFormValues } from "./types";
 
 const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
 const VALID_LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -77,11 +78,11 @@ export function validateField(field: LaunchFieldName, values: LaunchFormValues) 
       const trimmedDescription = getTrimmedValue(values.description);
 
       if (!trimmedDescription) {
-        return "Description is required.";
+        return null;
       }
 
-      if (trimmedDescription.length < 20 || trimmedDescription.length > 500) {
-        return "Description must be between 20 and 500 characters.";
+      if (trimmedDescription.length > 500) {
+        return "Description must be 500 characters or fewer.";
       }
 
       return null;
@@ -181,23 +182,34 @@ export function validateField(field: LaunchFieldName, values: LaunchFormValues) 
 
       return null;
     }
+    case "creatorWallet": {
+      const trimmedCreatorWallet = getTrimmedValue(values.creatorWallet);
+
+      if (!trimmedCreatorWallet) {
+        return null;
+      }
+
+      if (!isAddress(trimmedCreatorWallet)) {
+        return "Creator wallet must be a valid EVM address.";
+      }
+
+      return null;
+    }
   }
 }
 
-export function getStepErrors(step: LaunchStep, values: LaunchFormValues) {
-  return stepFields[step].reduce<LaunchFormErrors>((errors, field) => {
-    const error = validateField(field, values);
-
-    if (error) {
-      errors[field] = error;
-    }
-
-    return errors;
-  }, {});
-}
-
 export function getAllErrors(values: LaunchFormValues) {
-  const fields = stepFields[4];
+  const fields: LaunchFieldName[] = [
+    "name",
+    "symbol",
+    "description",
+    "logo",
+    "website",
+    "twitter",
+    "telegram",
+    "initialPurchase",
+    "creatorWallet"
+  ];
 
   return fields.reduce<LaunchFormErrors>((errors, field) => {
     const error = validateField(field, values);
@@ -208,8 +220,4 @@ export function getAllErrors(values: LaunchFormValues) {
 
     return errors;
   }, {});
-}
-
-export function isStepValid(step: LaunchStep, values: LaunchFormValues) {
-  return Object.keys(getStepErrors(step, values)).length === 0;
 }
