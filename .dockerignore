@@ -1,0 +1,14 @@
+.git
+.github
+.husky
+.next
+.turbo
+node_modules
+coverage
+dist
+services/api/target
+contracts/cache
+contracts/out
+contracts/lib
+pnpm-lock.yaml
+*.log

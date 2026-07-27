@@ -1,0 +1,13 @@
+.next
+.turbo
+coverage
+dist
+node_modules
+services/api/target
+contracts/cache
+contracts/out
+contracts/lib
+pnpm-lock.yaml
+Assets
+Docs
+arc-agent-marketplace

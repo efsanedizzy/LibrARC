@@ -1,0 +1,25 @@
+{
+  "name": "@librarc/admin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --port 3001",
+    "lint": "eslint . --max-warnings=0",
+    "start": "next start --port 3001",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@librarc/config": "workspace:*",
+    "@librarc/sdk": "workspace:*",
+    "@librarc/shared": "workspace:*",
+    "@librarc/ui": "workspace:*",
+    "next": "^15.4.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.11",
+    "tailwindcss": "^4.1.11"
+  }
+}
