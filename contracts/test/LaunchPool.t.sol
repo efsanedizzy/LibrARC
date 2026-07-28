@@ -23,6 +23,48 @@ contract MockQuoteAsset is ERC20 {
     }
 }
 
+contract MockConfigurableToken is ERC20 {
+    uint8 private immutable _tokenDecimals;
+    bool private _failTransfer;
+    bool private _failTransferFrom;
+
+    constructor(string memory name_, string memory symbol_, uint8 tokenDecimals_) ERC20(name_, symbol_) {
+        _tokenDecimals = tokenDecimals_;
+    }
+
+    function decimals() public view override returns (uint8) {
+        return _tokenDecimals;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setFailTransfer(bool failTransfer_) external {
+        _failTransfer = failTransfer_;
+    }
+
+    function setFailTransferFrom(bool failTransferFrom_) external {
+        _failTransferFrom = failTransferFrom_;
+    }
+
+    function transfer(address to, uint256 value) public override returns (bool) {
+        if (_failTransfer) {
+            return false;
+        }
+
+        return super.transfer(to, value);
+    }
+
+    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
+        if (_failTransferFrom) {
+            return false;
+        }
+
+        return super.transferFrom(from, to, value);
+    }
+}
+
 contract SurplusBalanceToken is ERC20 {
     address private _designatedPool;
     uint256 private _extraPoolBalance;
@@ -93,7 +135,31 @@ contract LaunchPoolTest is Test, IERC20Errors {
     event PoolInitialized(
         address indexed launchToken, uint256 totalTokenSupply, uint256 virtualUsdcReserve, uint256 virtualTokenReserve
     );
+    event BuyExecuted(
+        address indexed buyer,
+        address indexed recipient,
+        uint256 usdcAmountIn,
+        uint256 fee,
+        uint256 netUsdcIn,
+        uint256 tokenAmountOut,
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve
+    );
+    event SellExecuted(
+        address indexed seller,
+        address indexed recipient,
+        uint256 tokenAmountIn,
+        uint256 grossUsdcAmountOut,
+        uint256 fee,
+        uint256 netUsdcAmountOut,
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve
+    );
+    event GraduationPendingEntered(uint256 realUsdcReserve, uint256 graduationThreshold);
 
+    address internal constant ALICE = address(0xA11CE);
+    address internal constant BOB = address(0xB0B);
+    address internal constant CAROL = address(0xCA401);
     address internal constant OTHER_ACCOUNT = address(0xB0B);
     address internal constant LIQUIDITY_RECIPIENT = address(0xCAFE);
 
@@ -868,6 +934,679 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(address(pool).balance, 0);
     }
 
+    function test_BuyExecutesSuccessfulZeroFeeTradeAndUpdatesAccounting() public {
+        uint256 buyAmountIn = 100_000;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 1_000_000_000);
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
+
+        uint256 tokenAmountOut = _buyFromPool(pool, ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, ALICE);
+
+        assertEq(tokenAmountOut, quote.tokenAmountOut);
+        assertEq(token.balanceOf(ALICE), quote.tokenAmountOut);
+        assertEq(quoteAsset.balanceOf(address(pool)), buyAmountIn);
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+        assertEq(pool.curveState().accruedProtocolFees, 0);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_BuyExecutesFeeBearingTradeAndEmitsEvent() public {
+        uint256 buyAmountIn = 100_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
+
+        _mintAndApproveQuoteAsset(ALICE, buyAmountIn, pool);
+
+        vm.expectEmit(true, true, false, true, address(pool));
+        emit BuyExecuted(
+            ALICE,
+            ALICE,
+            buyAmountIn,
+            quote.fee,
+            quote.netUsdcIn,
+            quote.tokenAmountOut,
+            quote.nextState.realUsdcReserve,
+            quote.nextState.realTokenReserve
+        );
+
+        vm.prank(ALICE);
+        uint256 tokenAmountOut = pool.buy(buyAmountIn, quote.tokenAmountOut, block.timestamp, ALICE);
+
+        assertEq(tokenAmountOut, quote.tokenAmountOut);
+        assertEq(token.balanceOf(ALICE), quote.tokenAmountOut);
+        assertEq(quoteAsset.balanceOf(address(pool)), buyAmountIn);
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+        assertEq(pool.curveState().realUsdcReserve, quote.netUsdcIn);
+        assertEq(pool.curveState().realTokenReserve, token.FIXED_SUPPLY() - quote.tokenAmountOut);
+        assertEq(pool.curveState().accruedProtocolFees, quote.fee);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_BuySupportsAlternateRecipient() public {
+        uint256 buyAmountIn = 75_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
+
+        uint256 tokenAmountOut = _buyFromPool(pool, ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, CAROL);
+
+        assertEq(tokenAmountOut, quote.tokenAmountOut);
+        assertEq(token.balanceOf(CAROL), quote.tokenAmountOut);
+        assertEq(token.balanceOf(ALICE), 0);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_BuyZeroRecipientReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        _mintAndApproveQuoteAsset(ALICE, 1, pool);
+
+        vm.prank(ALICE);
+        vm.expectRevert(LaunchPool.ZeroRecipient.selector);
+        pool.buy(1, 0, block.timestamp, address(0));
+    }
+
+    function test_BuyZeroInputReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.prank(ALICE);
+        vm.expectRevert(BondingCurveMath.ZeroInput.selector);
+        pool.buy(0, 0, block.timestamp, ALICE);
+    }
+
+    function test_BuyExpiredDeadlineReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        _mintAndApproveQuoteAsset(ALICE, 1, pool);
+
+        vm.warp(100);
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(100), uint256(99)));
+        pool.buy(1, 0, 99, ALICE);
+    }
+
+    function test_BuySlippageFailureRevertsWithoutStateChanges() public {
+        uint256 buyAmountIn = 50_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolUsdcBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+
+        _mintAndApproveQuoteAsset(ALICE, buyAmountIn, pool);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientTokenOutput.selector, quote.tokenAmountOut + 1, quote.tokenAmountOut
+            )
+        );
+        pool.buy(buyAmountIn, quote.tokenAmountOut + 1, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
+        assertEq(token.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(token.balanceOf(ALICE), 0);
+    }
+
+    function test_BuyMissingAllowanceReverts() public {
+        uint256 buyAmountIn = 25_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        quoteAsset.mint(ALICE, buyAmountIn);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 0, buyAmountIn)
+        );
+        pool.buy(buyAmountIn, 0, block.timestamp, ALICE);
+    }
+
+    function test_BuyInsufficientUsdcBalanceReverts() public {
+        uint256 buyAmountIn = 25_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.prank(ALICE);
+        quoteAsset.approve(address(pool), buyAmountIn);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, ALICE, uint256(0), buyAmountIn)
+        );
+        pool.buy(buyAmountIn, 0, block.timestamp, ALICE);
+    }
+
+    function test_BuyThresholdEqualitySucceedsAndEntersGraduationPending() public {
+        uint256 threshold = 1000;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold);
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) = pool.quoteBuy(threshold);
+        assertTrue(reachesGraduationThreshold);
+
+        _mintAndApproveQuoteAsset(ALICE, threshold, pool);
+
+        vm.expectEmit(true, true, false, true, address(pool));
+        emit BuyExecuted(
+            ALICE,
+            ALICE,
+            threshold,
+            quote.fee,
+            quote.netUsdcIn,
+            quote.tokenAmountOut,
+            quote.nextState.realUsdcReserve,
+            quote.nextState.realTokenReserve
+        );
+        vm.expectEmit(false, false, false, true, address(pool));
+        emit GraduationPendingEntered(threshold, threshold);
+
+        vm.prank(ALICE);
+        uint256 tokenAmountOut = pool.buy(threshold, quote.tokenAmountOut, block.timestamp, ALICE);
+
+        assertEq(tokenAmountOut, quote.tokenAmountOut);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.GraduationPending));
+        assertFalse(pool.isTradingActive());
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+    }
+
+    function test_BuyThresholdOvershootRevertsWithoutMutation() public {
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999);
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolUsdcBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 buyerUsdcBefore = 1000;
+
+        _mintAndApproveQuoteAsset(ALICE, buyerUsdcBefore, pool);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999)
+        );
+        pool.buy(1000, 1, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
+        assertEq(token.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(quoteAsset.balanceOf(ALICE), buyerUsdcBefore);
+        assertEq(token.balanceOf(ALICE), 0);
+    }
+
+    function test_BuyWhileNotActiveReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized));
+        pool.buy(1, 0, block.timestamp, ALICE);
+
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.GraduationPending);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.GraduationPending)
+        );
+        pool.buy(1, 0, block.timestamp, ALICE);
+
+        pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.Graduated);
+
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        pool.buy(1, 0, block.timestamp, ALICE);
+    }
+
+    function test_SellExecutesSuccessfulZeroFeeTradeAndUpdatesAccounting() public {
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        uint256 sellAmount = boughtTokens / 2;
+        BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmount);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), sellAmount);
+
+        vm.prank(ALICE);
+        uint256 netUsdcAmountOut = pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, ALICE);
+
+        assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
+        assertEq(netUsdcAmountOut, quote.grossUsdcAmountOut);
+        assertEq(quoteAsset.balanceOf(ALICE), netUsdcAmountOut);
+        assertEq(token.balanceOf(ALICE), boughtTokens - sellAmount);
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+        assertEq(quoteAsset.balanceOf(address(pool)), 100_000 - netUsdcAmountOut);
+        assertEq(token.balanceOf(address(pool)), token.FIXED_SUPPLY() - boughtTokens + sellAmount);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_SellExecutesFeeBearingTradeAndEmitsEvent() public {
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) =
+            _prepareSellFixture(DEFAULT_BUY_FEE_BPS, DEFAULT_SELL_FEE_BPS, 100_000);
+        uint256 sellAmount = boughtTokens / 2;
+        BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmount);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), sellAmount);
+
+        vm.expectEmit(true, true, false, true, address(pool));
+        emit SellExecuted(
+            ALICE,
+            ALICE,
+            sellAmount,
+            quote.grossUsdcAmountOut,
+            quote.fee,
+            quote.netUsdcAmountOut,
+            quote.nextState.realUsdcReserve,
+            quote.nextState.realTokenReserve
+        );
+
+        vm.prank(ALICE);
+        uint256 netUsdcAmountOut = pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, ALICE);
+
+        assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
+        assertEq(quoteAsset.balanceOf(ALICE), netUsdcAmountOut);
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+        assertEq(pool.curveState().accruedProtocolFees, quote.nextState.accruedProtocolFees);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_SellSupportsAlternateRecipient() public {
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        uint256 sellAmount = boughtTokens / 2;
+        BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmount);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), sellAmount);
+
+        vm.prank(ALICE);
+        uint256 netUsdcAmountOut = pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, CAROL);
+
+        assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
+        assertEq(quoteAsset.balanceOf(CAROL), netUsdcAmountOut);
+        assertEq(quoteAsset.balanceOf(ALICE), 0);
+    }
+
+    function test_SellZeroRecipientReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), boughtTokens);
+
+        vm.prank(ALICE);
+        vm.expectRevert(LaunchPool.ZeroRecipient.selector);
+        pool.sell(boughtTokens, 0, block.timestamp, address(0));
+    }
+
+    function test_SellZeroInputReverts() public {
+        (LaunchPoolHarness pool,,) = _prepareSellFixture(0, 0, 100_000);
+
+        vm.prank(ALICE);
+        vm.expectRevert(BondingCurveMath.ZeroInput.selector);
+        pool.sell(0, 0, block.timestamp, ALICE);
+    }
+
+    function test_SellExpiredDeadlineReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), boughtTokens);
+
+        vm.warp(200);
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(200), uint256(199)));
+        pool.sell(boughtTokens, 0, 199, ALICE);
+    }
+
+    function test_SellSlippageFailureRevertsWithoutStateChanges() public {
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        uint256 sellAmount = boughtTokens / 2;
+        BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmount);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolUsdcBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 sellerTokenBefore = token.balanceOf(ALICE);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), sellAmount);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientUsdcOutput.selector, quote.netUsdcAmountOut + 1, quote.netUsdcAmountOut
+            )
+        );
+        pool.sell(sellAmount, quote.netUsdcAmountOut + 1, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
+        assertEq(token.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(token.balanceOf(ALICE), sellerTokenBefore);
+        assertEq(quoteAsset.balanceOf(ALICE), 0);
+    }
+
+    function test_SellMissingAllowanceReverts() public {
+        (LaunchPoolHarness pool,, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 0, boughtTokens)
+        );
+        pool.sell(boughtTokens, 0, block.timestamp, ALICE);
+    }
+
+    function test_SellInsufficientTokenBalanceReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        uint256 transferredAway = boughtTokens / 2;
+
+        vm.prank(ALICE);
+        assertTrue(token.transfer(BOB, transferredAway));
+
+        vm.prank(ALICE);
+        token.approve(address(pool), boughtTokens);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, ALICE, boughtTokens - transferredAway, boughtTokens
+            )
+        );
+        pool.sell(boughtTokens, 0, block.timestamp, ALICE);
+    }
+
+    function test_SellInsufficientRealUsdcReserveReverts() public {
+        uint256 totalSupply_ = 1_000_000 ether;
+        uint256 traderTokenAmount = 2 ether;
+        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
+            _deployFailingPool(18, 6, totalSupply_);
+        _seedCustomSellState(pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 0, 0);
+
+        vm.prank(ALICE);
+        vm.expectRevert(BondingCurveMath.InsufficientRealUsdcReserve.selector);
+        pool.sell(traderTokenAmount, 0, block.timestamp, ALICE);
+    }
+
+    function test_SellWhileNotActiveReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized));
+        pool.sell(1, 0, block.timestamp, ALICE);
+
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.GraduationPending);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.GraduationPending)
+        );
+        pool.sell(1, 0, block.timestamp, ALICE);
+
+        pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.Graduated);
+
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        pool.sell(1, 0, block.timestamp, ALICE);
+    }
+
+    function test_FailedUsdcTransferFromLeavesBuyStateUnchanged() public {
+        uint256 totalSupply_ = 1_000_000 ether;
+        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
+            _deployFailingPool(18, 6, totalSupply_);
+        _fundCustomPoolExact(pool, launchToken_, totalSupply_);
+        pool.initialize();
+
+        quoteToken_.mint(ALICE, 100_000);
+        vm.prank(ALICE);
+        quoteToken_.approve(address(pool), 100_000);
+        quoteToken_.setFailTransferFrom(true);
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolQuoteBefore = quoteToken_.balanceOf(address(pool));
+        uint256 poolTokenBefore = launchToken_.balanceOf(address(pool));
+        uint256 buyerQuoteBefore = quoteToken_.balanceOf(ALICE);
+
+        vm.prank(ALICE);
+        vm.expectRevert();
+        pool.buy(100_000, 1, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteToken_.balanceOf(address(pool)), poolQuoteBefore);
+        assertEq(launchToken_.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(quoteToken_.balanceOf(ALICE), buyerQuoteBefore);
+        assertEq(launchToken_.balanceOf(ALICE), 0);
+    }
+
+    function test_FailedOutgoingTokenTransferLeavesBuyStateUnchanged() public {
+        uint256 totalSupply_ = 1_000_000 ether;
+        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
+            _deployFailingPool(18, 6, totalSupply_);
+        _fundCustomPoolExact(pool, launchToken_, totalSupply_);
+        pool.initialize();
+
+        quoteToken_.mint(ALICE, 100_000);
+        vm.prank(ALICE);
+        quoteToken_.approve(address(pool), 100_000);
+        launchToken_.setFailTransfer(true);
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolQuoteBefore = quoteToken_.balanceOf(address(pool));
+        uint256 poolTokenBefore = launchToken_.balanceOf(address(pool));
+        uint256 buyerQuoteBefore = quoteToken_.balanceOf(ALICE);
+
+        vm.prank(ALICE);
+        vm.expectRevert();
+        pool.buy(100_000, 1, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteToken_.balanceOf(address(pool)), poolQuoteBefore);
+        assertEq(launchToken_.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(quoteToken_.balanceOf(ALICE), buyerQuoteBefore);
+        assertEq(launchToken_.balanceOf(ALICE), 0);
+    }
+
+    function test_FailedTokenTransferFromLeavesSellStateUnchanged() public {
+        uint256 totalSupply_ = 1_000_000 ether;
+        uint256 traderTokenAmount = 10_000 ether;
+        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
+            _deployFailingPool(18, 6, totalSupply_);
+        _seedCustomSellState(pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 500_000, 10_000);
+        launchToken_.setFailTransferFrom(true);
+
+        BondingCurveMath.SellQuote memory quote = pool.quoteSell(traderTokenAmount / 2);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolQuoteBefore = quoteToken_.balanceOf(address(pool));
+        uint256 poolTokenBefore = launchToken_.balanceOf(address(pool));
+        uint256 sellerTokenBefore = launchToken_.balanceOf(ALICE);
+
+        vm.prank(ALICE);
+        vm.expectRevert();
+        pool.sell(traderTokenAmount / 2, quote.netUsdcAmountOut, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteToken_.balanceOf(address(pool)), poolQuoteBefore);
+        assertEq(launchToken_.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(launchToken_.balanceOf(ALICE), sellerTokenBefore);
+        assertEq(quoteToken_.balanceOf(ALICE), 0);
+    }
+
+    function test_FailedOutgoingUsdcTransferLeavesSellStateUnchanged() public {
+        uint256 totalSupply_ = 1_000_000 ether;
+        uint256 traderTokenAmount = 10_000 ether;
+        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
+            _deployFailingPool(18, 6, totalSupply_);
+        _seedCustomSellState(pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 500_000, 10_000);
+        quoteToken_.setFailTransfer(true);
+
+        BondingCurveMath.SellQuote memory quote = pool.quoteSell(traderTokenAmount / 2);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolQuoteBefore = quoteToken_.balanceOf(address(pool));
+        uint256 poolTokenBefore = launchToken_.balanceOf(address(pool));
+        uint256 sellerTokenBefore = launchToken_.balanceOf(ALICE);
+
+        vm.prank(ALICE);
+        vm.expectRevert();
+        pool.sell(traderTokenAmount / 2, quote.netUsdcAmountOut, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteToken_.balanceOf(address(pool)), poolQuoteBefore);
+        assertEq(launchToken_.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(launchToken_.balanceOf(ALICE), sellerTokenBefore);
+        assertEq(quoteToken_.balanceOf(ALICE), 0);
+    }
+
+    function test_DonationsDoNotChangeGraduationCapacity() public {
+        SurplusBalanceToken token = new SurplusBalanceToken(address(this), 1_000_000 ether);
+        LaunchPoolHarness pool = _deployPool(
+            address(token),
+            token.totalSupply(),
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            SELL_TEST_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+        assertTrue(token.transfer(address(pool), token.totalSupply()));
+        pool.initialize();
+        pool.exposedSetAccountedState(123_456, 900_000 ether, 789, LaunchPool.PoolStatus.Active);
+
+        uint256 capacityBefore = pool.remainingGraduationCapacity();
+
+        quoteAsset.mint(address(pool), 1_000_000);
+        token.setPoolBalanceBonus(address(pool), 500 ether);
+
+        assertEq(pool.remainingGraduationCapacity(), capacityBefore);
+    }
+
+    function testFuzz_SuccessfulBuysBelowGraduationCapacityMatchQuotes(uint256 usdcAmountIn) public {
+        uint256 threshold = 1_000_000;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold);
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        usdcAmountIn = bound(usdcAmountIn, 1, threshold);
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(usdcAmountIn);
+        uint256 tokenAmountOut = _buyFromPool(pool, ALICE, usdcAmountIn, quote.tokenAmountOut, block.timestamp, ALICE);
+
+        assertEq(tokenAmountOut, quote.tokenAmountOut);
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+        _assertPoolSolvency(pool);
+    }
+
+    function testFuzz_SuccessfulSellsMatchQuotesAndPreserveSolvency(uint256 buyAmountIn, uint256 sellAmountIn) public {
+        buyAmountIn = bound(buyAmountIn, 10_000, 1_000_000);
+
+        uint256 totalSupply_ = 1_000_000 ether;
+        MockConfigurableToken launchToken_ = new MockConfigurableToken("Launch Token", "LCH", 18);
+        launchToken_.mint(address(this), totalSupply_);
+
+        LaunchPoolHarness pool = _deployPool(
+            address(launchToken_),
+            totalSupply_,
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            SELL_TEST_VIRTUAL_TOKEN_RESERVE,
+            0,
+            0,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+        _fundCustomPoolExact(pool, launchToken_, totalSupply_);
+        pool.initialize();
+
+        uint256 boughtTokens = _buyFromPool(pool, ALICE, buyAmountIn, 1, block.timestamp, ALICE);
+
+        sellAmountIn = bound(sellAmountIn, 2 ether, boughtTokens);
+        BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmountIn);
+
+        vm.prank(ALICE);
+        launchToken_.approve(address(pool), sellAmountIn);
+
+        vm.prank(ALICE);
+        uint256 netUsdcAmountOut = pool.sell(sellAmountIn, quote.netUsdcAmountOut, block.timestamp, ALICE);
+
+        assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+        assertLe(pool.curveState().realTokenReserve, totalSupply_);
+        _assertPoolSolvency(pool);
+    }
+
+    function testFuzz_FailedSlippageBuysNeverMutateState(uint256 usdcAmountIn) public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        usdcAmountIn = bound(usdcAmountIn, 1, 100_000);
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(usdcAmountIn);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolUsdcBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+
+        _mintAndApproveQuoteAsset(ALICE, usdcAmountIn, pool);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientTokenOutput.selector, quote.tokenAmountOut + 1, quote.tokenAmountOut
+            )
+        );
+        pool.buy(usdcAmountIn, quote.tokenAmountOut + 1, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
+        assertEq(token.balanceOf(address(pool)), poolTokenBefore);
+    }
+
+    function testFuzz_ThresholdCrossingBuysNeverMutateState(uint256 usdcAmountIn) public {
+        uint256 threshold = 50_000;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold);
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        usdcAmountIn = bound(usdcAmountIn, threshold + 1, threshold * 2);
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolUsdcBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+
+        _mintAndApproveQuoteAsset(ALICE, usdcAmountIn, pool);
+
+        vm.prank(ALICE);
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, threshold)
+        );
+        pool.buy(usdcAmountIn, 1, block.timestamp, ALICE);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
+        assertEq(token.balanceOf(address(pool)), poolTokenBefore);
+    }
+
     function testFuzz_ValidConstructorVirtualReserves(uint256 virtualUsdcReserve, uint256 virtualTokenReserve) public {
         virtualUsdcReserve = bound(virtualUsdcReserve, 1, type(uint128).max);
         virtualTokenReserve = bound(virtualTokenReserve, 1, type(uint128).max);
@@ -1007,6 +1746,121 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(pool.remainingGraduationCapacity(), DEFAULT_GRADUATION_THRESHOLD - realUsdcReserve);
     }
 
+    function _mintAndApproveQuoteAsset(address holder, uint256 amount, LaunchPoolHarness pool) internal {
+        quoteAsset.mint(holder, amount);
+
+        vm.prank(holder);
+        quoteAsset.approve(address(pool), amount);
+    }
+
+    function _buyFromPool(
+        LaunchPoolHarness pool,
+        address buyer,
+        uint256 usdcAmountIn,
+        uint256 minTokenAmountOut,
+        uint256 deadline,
+        address recipient
+    ) internal returns (uint256 tokenAmountOut) {
+        _mintAndApproveQuoteAsset(buyer, usdcAmountIn, pool);
+
+        vm.prank(buyer);
+        tokenAmountOut = pool.buy(usdcAmountIn, minTokenAmountOut, deadline, recipient);
+    }
+
+    function _deployCustomPool(
+        address launchTokenAddress,
+        address quoteTokenAddress,
+        uint256 totalTokenSupply,
+        uint256 virtualUsdcReserve,
+        uint256 virtualTokenReserve,
+        uint256 buyFeeBps,
+        uint256 sellFeeBps,
+        uint256 graduationThreshold
+    ) internal returns (LaunchPoolHarness pool) {
+        pool = new LaunchPoolHarness(
+            address(this),
+            launchTokenAddress,
+            quoteTokenAddress,
+            address(feeVault),
+            address(liquidityAdapter),
+            LIQUIDITY_RECIPIENT,
+            totalTokenSupply,
+            virtualUsdcReserve,
+            virtualTokenReserve,
+            buyFeeBps,
+            sellFeeBps,
+            graduationThreshold
+        );
+    }
+
+    function _prepareSellFixture(uint256 buyFeeBps, uint256 sellFeeBps, uint256 buyAmountIn)
+        internal
+        returns (LaunchPoolHarness pool, LibrARCToken token, uint256 tokenAmountOut)
+    {
+        (pool, token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            buyFeeBps,
+            sellFeeBps,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        tokenAmountOut = _buyFromPool(pool, ALICE, buyAmountIn, 1, block.timestamp, ALICE);
+    }
+
+    function _deployFailingPool(uint8 launchTokenDecimals, uint8 quoteTokenDecimals, uint256 totalTokenSupply)
+        internal
+        returns (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_)
+    {
+        launchToken_ = new MockConfigurableToken("Launch Token", "LCH", launchTokenDecimals);
+        quoteToken_ = new MockConfigurableToken("Arc USDC", "USDC", quoteTokenDecimals);
+        launchToken_.mint(address(this), totalTokenSupply);
+
+        pool = _deployCustomPool(
+            address(launchToken_),
+            address(quoteToken_),
+            totalTokenSupply,
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            SELL_TEST_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+    }
+
+    function _fundCustomPoolExact(LaunchPoolHarness pool, MockConfigurableToken launchToken_, uint256 amount) internal {
+        assertTrue(launchToken_.transfer(address(pool), amount));
+    }
+
+    function _seedCustomSellState(
+        LaunchPoolHarness pool,
+        MockConfigurableToken launchToken_,
+        MockConfigurableToken quoteToken_,
+        uint256 totalTokenSupply_,
+        uint256 traderTokenAmount,
+        uint256 realUsdcReserve,
+        uint256 accruedProtocolFees
+    ) internal {
+        _fundCustomPoolExact(pool, launchToken_, totalTokenSupply_);
+        pool.initialize();
+
+        if (realUsdcReserve + accruedProtocolFees > 0) {
+            quoteToken_.mint(address(pool), realUsdcReserve + accruedProtocolFees);
+        }
+
+        vm.prank(address(pool));
+        assertTrue(launchToken_.transfer(ALICE, traderTokenAmount));
+
+        pool.exposedSetAccountedState(
+            realUsdcReserve, totalTokenSupply_ - traderTokenAmount, accruedProtocolFees, LaunchPool.PoolStatus.Active
+        );
+
+        vm.prank(ALICE);
+        launchToken_.approve(address(pool), type(uint256).max);
+    }
+
     function _deployDefaultPool() internal returns (LaunchPoolHarness pool, LibrARCToken token) {
         return _deployConfiguredPool(
             DEFAULT_VIRTUAL_USDC_RESERVE,
@@ -1045,13 +1899,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 sellFeeBps,
         uint256 graduationThreshold
     ) internal returns (LaunchPoolHarness pool) {
-        pool = new LaunchPoolHarness(
-            address(this),
+        pool = _deployCustomPool(
             launchTokenAddress,
             address(quoteAsset),
-            address(feeVault),
-            address(liquidityAdapter),
-            LIQUIDITY_RECIPIENT,
             totalTokenSupply,
             virtualUsdcReserve,
             virtualTokenReserve,
@@ -1094,5 +1944,22 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(left.netUsdcIn, right.netUsdcIn);
         assertEq(left.tokenAmountOut, right.tokenAmountOut);
         _assertCurveStateEq(left.nextState, right.nextState);
+    }
+
+    function _assertSellQuoteEq(BondingCurveMath.SellQuote memory left, BondingCurveMath.SellQuote memory right)
+        internal
+        pure
+    {
+        assertEq(left.fee, right.fee);
+        assertEq(left.grossUsdcAmountOut, right.grossUsdcAmountOut);
+        assertEq(left.netUsdcAmountOut, right.netUsdcAmountOut);
+        _assertCurveStateEq(left.nextState, right.nextState);
+    }
+
+    function _assertPoolSolvency(LaunchPoolHarness pool) internal view {
+        BondingCurveMath.CurveState memory state = pool.curveState();
+
+        assertGe(pool.quoteAsset().balanceOf(address(pool)), state.realUsdcReserve + state.accruedProtocolFees);
+        assertGe(pool.launchToken().balanceOf(address(pool)), state.realTokenReserve);
     }
 }

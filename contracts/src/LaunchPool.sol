@@ -2,6 +2,8 @@
 pragma solidity 0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {ILiquidityAdapter} from "./interfaces/ILiquidityAdapter.sol";
 import {BondingCurveMath} from "./libraries/BondingCurveMath.sol";
@@ -11,7 +13,9 @@ import {BondingCurveMath} from "./libraries/BondingCurveMath.sol";
 /// @dev This phase stores immutable pool configuration, internal reserve accounting, one-time initialization,
 /// lifecycle state, and view-only quote functions. It intentionally does not execute trading, fee sweeping,
 /// or liquidity migration.
-contract LaunchPool {
+contract LaunchPool is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     /// @notice Lifecycle states for the launch pool.
     enum PoolStatus {
         Uninitialized,
@@ -38,6 +42,10 @@ contract LaunchPool {
     error InvalidTokenTotalSupply(uint256 actualTotalSupply, uint256 expectedTotalSupply);
     error InsufficientTokenFunding(uint256 actualBalance, uint256 requiredBalance);
     error GraduationThresholdExceeded(uint256 currentRealUsdcReserve, uint256 netUsdcIn, uint256 graduationThreshold);
+    error ZeroRecipient();
+    error ExpiredDeadline(uint256 currentTimestamp, uint256 deadline);
+    error InsufficientTokenOutput(uint256 minimumTokenAmountOut, uint256 actualTokenAmountOut);
+    error InsufficientUsdcOutput(uint256 minimumUsdcAmountOut, uint256 actualUsdcAmountOut);
     error NativeAssetNotAccepted();
 
     /// @notice Emitted when the pool is successfully initialized with its fixed launch-token inventory.
@@ -48,6 +56,51 @@ contract LaunchPool {
     event PoolInitialized(
         address indexed launchToken, uint256 totalTokenSupply, uint256 virtualUsdcReserve, uint256 virtualTokenReserve
     );
+
+    /// @notice Emitted when a buy executes successfully.
+    /// @param buyer The address paying quote asset into the pool.
+    /// @param recipient The address receiving launch tokens.
+    /// @param usdcAmountIn The gross quote-asset input amount.
+    /// @param fee The protocol fee retained in the pool.
+    /// @param netUsdcIn The quote-asset amount added to real reserves.
+    /// @param tokenAmountOut The launch-token amount transferred to the recipient.
+    /// @param realUsdcReserve The resulting accounted real USDC reserve.
+    /// @param realTokenReserve The resulting accounted real token reserve.
+    event BuyExecuted(
+        address indexed buyer,
+        address indexed recipient,
+        uint256 usdcAmountIn,
+        uint256 fee,
+        uint256 netUsdcIn,
+        uint256 tokenAmountOut,
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve
+    );
+
+    /// @notice Emitted when a sell executes successfully.
+    /// @param seller The address paying launch tokens into the pool.
+    /// @param recipient The address receiving quote asset.
+    /// @param tokenAmountIn The launch-token input amount.
+    /// @param grossUsdcAmountOut The gross quote-asset amount removed from real reserves.
+    /// @param fee The protocol fee retained in the pool.
+    /// @param netUsdcAmountOut The quote-asset amount transferred to the recipient.
+    /// @param realUsdcReserve The resulting accounted real USDC reserve.
+    /// @param realTokenReserve The resulting accounted real token reserve.
+    event SellExecuted(
+        address indexed seller,
+        address indexed recipient,
+        uint256 tokenAmountIn,
+        uint256 grossUsdcAmountOut,
+        uint256 fee,
+        uint256 netUsdcAmountOut,
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve
+    );
+
+    /// @notice Emitted when an exact-threshold buy permanently disables trading and awaits graduation.
+    /// @param realUsdcReserve The accounted real USDC reserve after the threshold-reaching buy.
+    /// @param graduationThreshold The configured graduation threshold.
+    event GraduationPendingEntered(uint256 realUsdcReserve, uint256 graduationThreshold);
 
     /// @notice The factory allowed to perform one-time initialization.
     address public immutable factory;
@@ -180,6 +233,100 @@ contract LaunchPool {
         emit PoolInitialized(address(launchToken), totalTokenSupply, virtualUsdcReserve, virtualTokenReserve);
     }
 
+    /// @notice Executes a buy against the current internal bonding-curve state.
+    /// @param usdcAmountIn The gross quote-asset input amount in 6-decimal units.
+    /// @param minTokenAmountOut The minimum acceptable launch-token output amount.
+    /// @param deadline The latest timestamp at which the trade remains valid.
+    /// @param recipient The address receiving the launch tokens.
+    /// @return tokenAmountOut The exact launch-token output amount transferred to the recipient.
+    function buy(uint256 usdcAmountIn, uint256 minTokenAmountOut, uint256 deadline, address recipient)
+        external
+        nonReentrant
+        returns (uint256 tokenAmountOut)
+    {
+        _requireActiveStatus();
+        if (recipient == address(0)) revert ZeroRecipient();
+        if (block.timestamp > deadline) revert ExpiredDeadline(block.timestamp, deadline);
+        if (usdcAmountIn == 0) revert BondingCurveMath.ZeroInput();
+
+        BondingCurveMath.CurveState memory currentState = curveState();
+        BondingCurveMath.BuyQuote memory quote = BondingCurveMath.quoteBuy(currentState, usdcAmountIn, buyFeeBps);
+        tokenAmountOut = quote.tokenAmountOut;
+
+        if (tokenAmountOut < minTokenAmountOut) {
+            revert InsufficientTokenOutput(minTokenAmountOut, tokenAmountOut);
+        }
+        if (quote.nextState.realUsdcReserve > graduationThreshold) {
+            revert GraduationThresholdExceeded(currentState.realUsdcReserve, quote.netUsdcIn, graduationThreshold);
+        }
+
+        _setCurveState(quote.nextState);
+
+        bool entersGraduationPending = quote.nextState.realUsdcReserve == graduationThreshold;
+        if (entersGraduationPending) {
+            status = PoolStatus.GraduationPending;
+        }
+
+        quoteAsset.safeTransferFrom(msg.sender, address(this), usdcAmountIn);
+        launchToken.safeTransfer(recipient, tokenAmountOut);
+
+        emit BuyExecuted(
+            msg.sender,
+            recipient,
+            usdcAmountIn,
+            quote.fee,
+            quote.netUsdcIn,
+            tokenAmountOut,
+            quote.nextState.realUsdcReserve,
+            quote.nextState.realTokenReserve
+        );
+
+        if (entersGraduationPending) {
+            emit GraduationPendingEntered(quote.nextState.realUsdcReserve, graduationThreshold);
+        }
+    }
+
+    /// @notice Executes a sell against the current internal bonding-curve state.
+    /// @param tokenAmountIn The launch-token input amount in 18-decimal units.
+    /// @param minUsdcAmountOut The minimum acceptable net quote-asset output amount.
+    /// @param deadline The latest timestamp at which the trade remains valid.
+    /// @param recipient The address receiving quote asset.
+    /// @return netUsdcAmountOut The exact quote-asset amount transferred to the recipient.
+    function sell(uint256 tokenAmountIn, uint256 minUsdcAmountOut, uint256 deadline, address recipient)
+        external
+        nonReentrant
+        returns (uint256 netUsdcAmountOut)
+    {
+        _requireActiveStatus();
+        if (recipient == address(0)) revert ZeroRecipient();
+        if (block.timestamp > deadline) revert ExpiredDeadline(block.timestamp, deadline);
+        if (tokenAmountIn == 0) revert BondingCurveMath.ZeroInput();
+
+        BondingCurveMath.SellQuote memory quote =
+            BondingCurveMath.quoteSell(curveState(), tokenAmountIn, sellFeeBps, totalTokenSupply);
+        netUsdcAmountOut = quote.netUsdcAmountOut;
+
+        if (netUsdcAmountOut < minUsdcAmountOut) {
+            revert InsufficientUsdcOutput(minUsdcAmountOut, netUsdcAmountOut);
+        }
+
+        _setCurveState(quote.nextState);
+
+        launchToken.safeTransferFrom(msg.sender, address(this), tokenAmountIn);
+        quoteAsset.safeTransfer(recipient, netUsdcAmountOut);
+
+        emit SellExecuted(
+            msg.sender,
+            recipient,
+            tokenAmountIn,
+            quote.grossUsdcAmountOut,
+            quote.fee,
+            netUsdcAmountOut,
+            quote.nextState.realUsdcReserve,
+            quote.nextState.realTokenReserve
+        );
+    }
+
     /// @notice Returns a view-only buy quote from the current internal curve state.
     /// @param usdcAmountIn The gross quote-asset input amount in 6-decimal units.
     /// @return quote The computed buy quote and its resulting next curve state.
@@ -232,6 +379,16 @@ contract LaunchPool {
     /// @return active True only when the pool status is `Active`.
     function isTradingActive() external view returns (bool active) {
         active = status == PoolStatus.Active;
+    }
+
+    function _requireActiveStatus() internal view {
+        if (status != PoolStatus.Active) revert PoolNotActive(status);
+    }
+
+    function _setCurveState(BondingCurveMath.CurveState memory nextState) internal {
+        _realUsdcReserve = nextState.realUsdcReserve;
+        _realTokenReserve = nextState.realTokenReserve;
+        _accruedProtocolFees = nextState.accruedProtocolFees;
     }
 
     receive() external payable {
