@@ -9,10 +9,9 @@ import {ILiquidityAdapter} from "./interfaces/ILiquidityAdapter.sol";
 import {BondingCurveMath} from "./libraries/BondingCurveMath.sol";
 
 /// @title LaunchPool
-/// @notice Phase 1 LaunchPool for LibrARC token launches.
+/// @notice Launch pool for LibrARC token launches with bonding-curve trading and permissionless graduation.
 /// @dev This phase stores immutable pool configuration, internal reserve accounting, one-time initialization,
-/// lifecycle state, and view-only quote functions. It intentionally does not execute trading, fee sweeping,
-/// or liquidity migration.
+/// lifecycle state, public trading, and atomic adapter-based liquidity graduation.
 contract LaunchPool is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -40,9 +39,20 @@ contract LaunchPool is ReentrancyGuard {
     error UnauthorizedFactory(address caller, address expectedFactory);
     error PoolAlreadyInitialized(PoolStatus currentStatus);
     error PoolNotActive(PoolStatus currentStatus);
+    error PoolNotGraduationPending(PoolStatus currentStatus);
     error InvalidTokenTotalSupply(uint256 actualTotalSupply, uint256 expectedTotalSupply);
     error InsufficientTokenFunding(uint256 actualBalance, uint256 requiredBalance);
     error GraduationThresholdExceeded(uint256 currentRealUsdcReserve, uint256 netUsdcIn, uint256 graduationThreshold);
+    error ZeroGraduationTokenReserve();
+    error ZeroGraduationUsdcReserve();
+    error InsufficientLaunchTokenBalance(uint256 actualBalance, uint256 requiredBalance);
+    error InsufficientQuoteAssetBalance(uint256 actualBalance, uint256 requiredBalance);
+    error ZeroMigrationId();
+    error LaunchTokenMigrationBalanceMismatch(uint256 expectedBalance, uint256 actualBalance);
+    error QuoteAssetMigrationBalanceMismatch(uint256 expectedBalance, uint256 actualBalance);
+    error LaunchTokenAllowanceNotCleared(uint256 remainingAllowance);
+    error QuoteAssetAllowanceNotCleared(uint256 remainingAllowance);
+    error ProtocolFeeAccountingChanged(uint256 expectedAccruedProtocolFees, uint256 actualAccruedProtocolFees);
     error ZeroRecipient();
     error ExpiredDeadline(uint256 currentTimestamp, uint256 deadline);
     error InsufficientTokenOutput(uint256 minimumTokenAmountOut, uint256 actualTokenAmountOut);
@@ -102,6 +112,24 @@ contract LaunchPool is ReentrancyGuard {
     /// @param realUsdcReserve The accounted real USDC reserve after the threshold-reaching buy.
     /// @param graduationThreshold The configured graduation threshold.
     event GraduationPendingEntered(uint256 realUsdcReserve, uint256 graduationThreshold);
+
+    /// @notice Emitted after a successful one-time migration of user-backed reserves through the liquidity adapter.
+    /// @param caller The permissionless caller that finalized graduation.
+    /// @param liquidityAdapter The immutable adapter that pulled the migrated assets.
+    /// @param liquidityRecipient The immutable recipient for the resulting liquidity position or claim.
+    /// @param migrationId The non-zero identifier returned by the adapter.
+    /// @param launchTokenAmount The exact launch-token amount migrated from internal real reserves.
+    /// @param quoteAssetAmount The exact quote-asset amount migrated from internal real reserves.
+    /// @param accruedProtocolFeesRemaining The protocol-owned fees intentionally left in the pool.
+    event GraduationCompleted(
+        address indexed caller,
+        address indexed liquidityAdapter,
+        address indexed liquidityRecipient,
+        bytes32 migrationId,
+        uint256 launchTokenAmount,
+        uint256 quoteAssetAmount,
+        uint256 accruedProtocolFeesRemaining
+    );
 
     /// @notice The factory allowed to perform one-time initialization.
     address public immutable factory;
@@ -232,6 +260,83 @@ contract LaunchPool is ReentrancyGuard {
         status = PoolStatus.Active;
 
         emit PoolInitialized(address(launchToken), totalTokenSupply, virtualUsdcReserve, virtualTokenReserve);
+    }
+
+    /// @notice Finalizes graduation by migrating only the user-backed real reserves through the immutable adapter.
+    /// @dev This function is permissionless, non-payable, and retryable after adapter failure because any reverted
+    /// migration restores the pre-call `GraduationPending` state, balances, and allowances.
+    /// @return migrationId The non-zero adapter identifier for the completed migration.
+    function graduate() external nonReentrant returns (bytes32 migrationId) {
+        if (status != PoolStatus.GraduationPending) revert PoolNotGraduationPending(status);
+
+        uint256 launchTokenAmount = _realTokenReserve;
+        if (launchTokenAmount == 0) revert ZeroGraduationTokenReserve();
+
+        uint256 quoteAssetAmount = _realUsdcReserve;
+        if (quoteAssetAmount == 0) revert ZeroGraduationUsdcReserve();
+
+        uint256 accruedProtocolFees = _accruedProtocolFees;
+        uint256 launchTokenBalanceBefore = launchToken.balanceOf(address(this));
+        uint256 quoteAssetBalanceBefore = quoteAsset.balanceOf(address(this));
+        uint256 requiredQuoteCoverage = quoteAssetAmount + accruedProtocolFees;
+
+        if (launchTokenBalanceBefore < launchTokenAmount) {
+            revert InsufficientLaunchTokenBalance(launchTokenBalanceBefore, launchTokenAmount);
+        }
+        if (quoteAssetBalanceBefore < requiredQuoteCoverage) {
+            revert InsufficientQuoteAssetBalance(quoteAssetBalanceBefore, requiredQuoteCoverage);
+        }
+
+        status = PoolStatus.Graduated;
+        _realTokenReserve = 0;
+        _realUsdcReserve = 0;
+
+        launchToken.forceApprove(address(liquidityAdapter), launchTokenAmount);
+        quoteAsset.forceApprove(address(liquidityAdapter), quoteAssetAmount);
+
+        migrationId = liquidityAdapter.migrateLiquidity(
+            address(launchToken), address(quoteAsset), launchTokenAmount, quoteAssetAmount, liquidityRecipient
+        );
+        if (migrationId == bytes32(0)) revert ZeroMigrationId();
+
+        launchToken.forceApprove(address(liquidityAdapter), 0);
+        quoteAsset.forceApprove(address(liquidityAdapter), 0);
+
+        uint256 remainingLaunchTokenAllowance = launchToken.allowance(address(this), address(liquidityAdapter));
+        if (remainingLaunchTokenAllowance != 0) {
+            revert LaunchTokenAllowanceNotCleared(remainingLaunchTokenAllowance);
+        }
+
+        uint256 remainingQuoteAssetAllowance = quoteAsset.allowance(address(this), address(liquidityAdapter));
+        if (remainingQuoteAssetAllowance != 0) {
+            revert QuoteAssetAllowanceNotCleared(remainingQuoteAssetAllowance);
+        }
+
+        uint256 launchTokenBalanceAfter = launchToken.balanceOf(address(this));
+        uint256 expectedLaunchTokenBalanceAfter = launchTokenBalanceBefore - launchTokenAmount;
+        if (launchTokenBalanceAfter != expectedLaunchTokenBalanceAfter) {
+            revert LaunchTokenMigrationBalanceMismatch(expectedLaunchTokenBalanceAfter, launchTokenBalanceAfter);
+        }
+
+        uint256 quoteAssetBalanceAfter = quoteAsset.balanceOf(address(this));
+        uint256 expectedQuoteAssetBalanceAfter = quoteAssetBalanceBefore - quoteAssetAmount;
+        if (quoteAssetBalanceAfter != expectedQuoteAssetBalanceAfter) {
+            revert QuoteAssetMigrationBalanceMismatch(expectedQuoteAssetBalanceAfter, quoteAssetBalanceAfter);
+        }
+
+        if (_accruedProtocolFees != accruedProtocolFees) {
+            revert ProtocolFeeAccountingChanged(accruedProtocolFees, _accruedProtocolFees);
+        }
+
+        emit GraduationCompleted(
+            msg.sender,
+            address(liquidityAdapter),
+            liquidityRecipient,
+            migrationId,
+            launchTokenAmount,
+            quoteAssetAmount,
+            accruedProtocolFees
+        );
     }
 
     /// @notice Executes a buy against the current internal bonding-curve state.

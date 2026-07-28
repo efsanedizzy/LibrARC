@@ -3,10 +3,14 @@ pragma solidity 0.8.26;
 
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Test} from "forge-std/Test.sol";
 
 import {BondingCurveMath} from "../src/libraries/BondingCurveMath.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {ILiquidityAdapter} from "../src/interfaces/ILiquidityAdapter.sol";
 import {LaunchPool} from "../src/LaunchPool.sol";
 import {LibrARCToken} from "../src/LibrARCToken.sol";
 import {MockLiquidityAdapter} from "./mocks/MockLiquidityAdapter.sol";
@@ -87,6 +91,80 @@ contract SurplusBalanceToken is ERC20 {
     }
 }
 
+contract ScenarioLiquidityAdapter is ILiquidityAdapter {
+    using SafeERC20 for IERC20;
+
+    enum Mode {
+        Exact,
+        RevertAlways,
+        ReturnZero,
+        NoPull,
+        LaunchOnly,
+        QuoteOnly,
+        PartialLaunch,
+        PartialQuote,
+        Reenter
+    }
+
+    error ScenarioLiquidityAdapterForcedRevert();
+
+    Mode public mode;
+    address public reentryTarget;
+
+    function setMode(Mode mode_) external {
+        mode = mode_;
+    }
+
+    function setReentryTarget(address reentryTarget_) external {
+        reentryTarget = reentryTarget_;
+    }
+
+    function migrateLiquidity(
+        address launchToken,
+        address quoteAsset,
+        uint256 launchTokenAmount,
+        uint256 quoteAssetAmount,
+        address liquidityRecipient
+    ) external returns (bytes32 migrationId) {
+        liquidityRecipient;
+
+        if (mode == Mode.RevertAlways) revert ScenarioLiquidityAdapterForcedRevert();
+        if (mode == Mode.Reenter) {
+            LaunchPool(payable(reentryTarget)).graduate();
+            revert("unreachable");
+        }
+
+        if (
+            mode == Mode.Exact || mode == Mode.ReturnZero || mode == Mode.LaunchOnly || mode == Mode.PartialLaunch
+                || mode == Mode.PartialQuote
+        ) {
+            uint256 launchTransferAmount = launchTokenAmount;
+            if (mode == Mode.PartialLaunch) {
+                launchTransferAmount = launchTokenAmount - 1;
+            }
+            IERC20(launchToken).safeTransferFrom(msg.sender, address(this), launchTransferAmount);
+        }
+
+        if (mode == Mode.Exact || mode == Mode.ReturnZero || mode == Mode.QuoteOnly || mode == Mode.PartialQuote) {
+            uint256 quoteTransferAmount = quoteAssetAmount;
+            if (mode == Mode.PartialQuote) {
+                quoteTransferAmount = quoteAssetAmount - 1;
+            }
+            IERC20(quoteAsset).safeTransferFrom(msg.sender, address(this), quoteTransferAmount);
+        }
+
+        if (mode == Mode.ReturnZero) {
+            return bytes32(0);
+        }
+
+        migrationId = keccak256(
+            abi.encode(
+                mode, msg.sender, launchToken, quoteAsset, launchTokenAmount, quoteAssetAmount, liquidityRecipient
+            )
+        );
+    }
+}
+
 contract LaunchPoolHarness is LaunchPool {
     constructor(
         address factory_,
@@ -156,6 +234,15 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 realTokenReserve
     );
     event GraduationPendingEntered(uint256 realUsdcReserve, uint256 graduationThreshold);
+    event GraduationCompleted(
+        address indexed caller,
+        address indexed liquidityAdapter,
+        address indexed liquidityRecipient,
+        bytes32 migrationId,
+        uint256 launchTokenAmount,
+        uint256 quoteAssetAmount,
+        uint256 accruedProtocolFeesRemaining
+    );
 
     address internal constant ALICE = address(0xA11CE);
     address internal constant BOB = address(0xB0B);
@@ -168,6 +255,7 @@ contract LaunchPoolTest is Test, IERC20Errors {
     uint256 internal constant DEFAULT_BUY_FEE_BPS = 250;
     uint256 internal constant DEFAULT_SELL_FEE_BPS = 300;
     uint256 internal constant DEFAULT_GRADUATION_THRESHOLD = 10_000_000;
+    uint256 internal constant FIXED_SUPPLY = 1_000_000_000 * 10 ** 18;
     uint256 internal constant SELL_TEST_VIRTUAL_TOKEN_RESERVE = 1_000_000 ether;
     uint256 internal constant SELL_TEST_REAL_TOKEN_RESERVE = 1_000_000 ether;
     uint256 internal constant SELL_TEST_REAL_USDC_RESERVE = 1_000_000;
@@ -1657,6 +1745,409 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(pool.remainingGraduationCapacity(), capacityBefore);
     }
 
+    function test_GraduateWhileUninitializedReverts() public {
+        (LaunchPoolHarness pool,) = _deployDefaultPool();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Uninitialized)
+        );
+        pool.graduate();
+    }
+
+    function test_GraduateWhileActiveReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Active)
+        );
+        pool.graduate();
+    }
+
+    function test_GraduateZeroRealTokenReserveReverts() public {
+        (LaunchPoolHarness pool,) = _prepareGraduationFixture(address(liquidityAdapter), 10_000, 0, 0, 0, 0);
+
+        vm.expectRevert(LaunchPool.ZeroGraduationTokenReserve.selector);
+        pool.graduate();
+    }
+
+    function test_GraduateZeroRealUsdcReserveReverts() public {
+        (LaunchPoolHarness pool,) =
+            _prepareGraduationFixture(address(liquidityAdapter), 0, tokenSupply() - 1 ether, 0, 0, 0);
+
+        vm.expectRevert(LaunchPool.ZeroGraduationUsdcReserve.selector);
+        pool.graduate();
+    }
+
+    function test_GraduateInsufficientLaunchTokenCoverageReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(liquidityAdapter), 10_000, tokenSupply(), 0, 0, 0);
+
+        vm.prank(address(pool));
+        assertTrue(token.transfer(ALICE, 1));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientLaunchTokenBalance.selector, token.FIXED_SUPPLY() - 1, token.FIXED_SUPPLY()
+            )
+        );
+        pool.graduate();
+    }
+
+    function test_GraduateInsufficientQuoteAssetCoverageReverts() public {
+        uint256 realUsdcReserve = 1000;
+        uint256 accruedProtocolFees = 50;
+        (LaunchPoolHarness pool,) = _prepareGraduationFixture(
+            address(liquidityAdapter), realUsdcReserve, tokenSupply() - 1 ether, accruedProtocolFees, 0, 0
+        );
+
+        vm.prank(address(pool));
+        assertTrue(quoteAsset.transfer(ALICE, 1));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientQuoteAssetBalance.selector,
+                realUsdcReserve + accruedProtocolFees - 1,
+                realUsdcReserve + accruedProtocolFees
+            )
+        );
+        pool.graduate();
+    }
+
+    function test_GraduateSucceedsPermissionlesslyAndMigratesOnlyRealReserves() public {
+        uint256 realUsdcReserve = 12_345;
+        uint256 realTokenReserve = tokenSupply() - 5 ether;
+        uint256 accruedProtocolFees = 678;
+        uint256 launchTokenDonation = 2 ether;
+        uint256 quoteAssetDonation = 90;
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(liquidityAdapter),
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            launchTokenDonation,
+            quoteAssetDonation
+        );
+        bytes32 expectedMigrationId = keccak256(
+            abi.encode(
+                uint256(1),
+                address(pool),
+                address(token),
+                address(quoteAsset),
+                realTokenReserve,
+                realUsdcReserve,
+                LIQUIDITY_RECIPIENT
+            )
+        );
+
+        vm.expectEmit(true, true, true, true, address(pool));
+        emit GraduationCompleted(
+            OTHER_ACCOUNT,
+            address(liquidityAdapter),
+            LIQUIDITY_RECIPIENT,
+            expectedMigrationId,
+            realTokenReserve,
+            realUsdcReserve,
+            accruedProtocolFees
+        );
+
+        vm.prank(OTHER_ACCOUNT);
+        bytes32 migrationId = pool.graduate();
+
+        BondingCurveMath.CurveState memory state = pool.curveState();
+        assertEq(migrationId, expectedMigrationId);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Graduated));
+        assertEq(state.realTokenReserve, 0);
+        assertEq(state.realUsdcReserve, 0);
+        assertEq(state.accruedProtocolFees, accruedProtocolFees);
+        assertEq(token.totalSupply(), tokenSupply());
+        assertEq(token.balanceOf(address(pool)), launchTokenDonation);
+        assertEq(quoteAsset.balanceOf(address(pool)), accruedProtocolFees + quoteAssetDonation);
+        assertEq(token.allowance(address(pool), address(liquidityAdapter)), 0);
+        assertEq(quoteAsset.allowance(address(pool), address(liquidityAdapter)), 0);
+        assertEq(liquidityAdapter.lastCaller(), address(pool));
+        assertEq(liquidityAdapter.lastLaunchToken(), address(token));
+        assertEq(liquidityAdapter.lastQuoteAsset(), address(quoteAsset));
+        assertEq(liquidityAdapter.lastLaunchTokenAmount(), realTokenReserve);
+        assertEq(liquidityAdapter.lastQuoteAssetAmount(), realUsdcReserve);
+        assertEq(liquidityAdapter.lastLiquidityRecipient(), LIQUIDITY_RECIPIENT);
+        assertEq(token.balanceOf(address(liquidityAdapter)), realTokenReserve);
+        assertEq(quoteAsset.balanceOf(address(liquidityAdapter)), realUsdcReserve);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_GraduateSecondAttemptReverts() public {
+        (LaunchPoolHarness pool,) =
+            _prepareGraduationFixture(address(liquidityAdapter), 10_000, tokenSupply() - 2 ether, 50, 1 ether, 10);
+
+        pool.graduate();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Graduated)
+        );
+        pool.graduate();
+    }
+
+    function test_BuyAndSellRemainDisabledAfterSuccessfulGraduation() public {
+        uint256 realTokenReserve = tokenSupply() - 2 ether;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(liquidityAdapter), 10_000, realTokenReserve, 25, 1 ether, 0);
+
+        pool.graduate();
+
+        _mintAndApproveQuoteAsset(ALICE, 1, pool);
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        pool.buy(1, 0, block.timestamp, ALICE);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), 1);
+
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        pool.sell(1, 0, block.timestamp, ALICE);
+    }
+
+    function test_GraduateAdapterRevertRollsBackAndCanBeRetried() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.RevertAlways);
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), 10_000, tokenSupply() - 3 ether, 250, 1 ether, 50);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(ScenarioLiquidityAdapter.ScenarioLiquidityAdapterForcedRevert.selector);
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.Exact);
+        bytes32 migrationId = pool.graduate();
+
+        assertTrue(migrationId != bytes32(0));
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Graduated));
+    }
+
+    function test_GraduateZeroMigrationIdRevertsAndRollsBack() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.ReturnZero);
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), 10_000, tokenSupply() - 2 ether, 0, 0, 0);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(LaunchPool.ZeroMigrationId.selector);
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
+    function test_GraduateNoAssetPullRevertsAndRollsBack() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.NoPull);
+        uint256 realUsdcReserve = 10_000;
+        uint256 realTokenReserve = tokenSupply() - 1 ether;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), realUsdcReserve, realTokenReserve, 0, 0, 0);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.LaunchTokenMigrationBalanceMismatch.selector,
+                poolTokenBefore - realTokenReserve,
+                poolTokenBefore
+            )
+        );
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
+    function test_GraduatePartialLaunchPullRevertsAndRollsBack() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.PartialLaunch);
+        uint256 realTokenReserve = tokenSupply() - 2 ether;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), 10_000, realTokenReserve, 0, 0, 0);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.LaunchTokenMigrationBalanceMismatch.selector,
+                poolTokenBefore - realTokenReserve,
+                poolTokenBefore - (realTokenReserve - 1)
+            )
+        );
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
+    function test_GraduatePartialQuotePullRevertsAndRollsBack() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.PartialQuote);
+        uint256 realUsdcReserve = 10_000;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), realUsdcReserve, tokenSupply() - 1 ether, 0, 0, 0);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.QuoteAssetMigrationBalanceMismatch.selector,
+                poolQuoteBefore - realUsdcReserve,
+                poolQuoteBefore - (realUsdcReserve - 1)
+            )
+        );
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
+    function test_GraduateLaunchOnlyPullRevertsAndRollsBack() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.LaunchOnly);
+        uint256 realUsdcReserve = 10_000;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), realUsdcReserve, tokenSupply() - 1 ether, 0, 0, 0);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.QuoteAssetMigrationBalanceMismatch.selector,
+                poolQuoteBefore - realUsdcReserve,
+                poolQuoteBefore
+            )
+        );
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
+    function test_GraduateQuoteOnlyPullRevertsAndRollsBack() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.QuoteOnly);
+        uint256 realTokenReserve = tokenSupply() - 1 ether;
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), 10_000, realTokenReserve, 0, 0, 0);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.LaunchTokenMigrationBalanceMismatch.selector,
+                poolTokenBefore - realTokenReserve,
+                poolTokenBefore
+            )
+        );
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
+    function test_GraduateReentrantAdapterAttemptFails() public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.Reenter);
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _prepareGraduationFixture(address(adapter), 10_000, tokenSupply() - 1 ether, 20, 0, 0);
+        adapter.setReentryTarget(address(pool));
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
+    function testFuzz_SuccessfulGraduationMigratesOnlyRealReserves(
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve,
+        uint256 accruedProtocolFees,
+        uint256 launchTokenDonation,
+        uint256 quoteAssetDonation
+    ) public {
+        uint256 fixedSupply = tokenSupply();
+
+        realUsdcReserve = bound(realUsdcReserve, 1, 1_000_000_000);
+        realTokenReserve = bound(realTokenReserve, 1, fixedSupply);
+        accruedProtocolFees = bound(accruedProtocolFees, 0, 1_000_000);
+        launchTokenDonation = bound(launchTokenDonation, 0, fixedSupply - realTokenReserve);
+        quoteAssetDonation = bound(quoteAssetDonation, 0, 1_000_000);
+
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(liquidityAdapter),
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            launchTokenDonation,
+            quoteAssetDonation
+        );
+
+        bytes32 migrationId = pool.graduate();
+        BondingCurveMath.CurveState memory state = pool.curveState();
+
+        assertTrue(migrationId != bytes32(0));
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Graduated));
+        assertEq(state.realTokenReserve, 0);
+        assertEq(state.realUsdcReserve, 0);
+        assertEq(state.accruedProtocolFees, accruedProtocolFees);
+        assertEq(liquidityAdapter.lastLaunchTokenAmount(), realTokenReserve);
+        assertEq(liquidityAdapter.lastQuoteAssetAmount(), realUsdcReserve);
+        assertEq(token.balanceOf(address(pool)), launchTokenDonation);
+        assertEq(quoteAsset.balanceOf(address(pool)), accruedProtocolFees + quoteAssetDonation);
+        assertEq(token.allowance(address(pool), address(liquidityAdapter)), 0);
+        assertEq(quoteAsset.allowance(address(pool), address(liquidityAdapter)), 0);
+        _assertPoolSolvency(pool);
+    }
+
+    function testFuzz_FailedGraduationAdapterNeverMutatesState(
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve,
+        uint256 accruedProtocolFees,
+        uint256 launchTokenDonation,
+        uint256 quoteAssetDonation
+    ) public {
+        ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
+        adapter.setMode(ScenarioLiquidityAdapter.Mode.RevertAlways);
+        uint256 fixedSupply = tokenSupply();
+
+        realUsdcReserve = bound(realUsdcReserve, 1, 1_000_000_000);
+        realTokenReserve = bound(realTokenReserve, 1, fixedSupply);
+        accruedProtocolFees = bound(accruedProtocolFees, 0, 1_000_000);
+        launchTokenDonation = bound(launchTokenDonation, 0, fixedSupply - realTokenReserve);
+        quoteAssetDonation = bound(quoteAssetDonation, 0, 1_000_000);
+
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(adapter),
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            launchTokenDonation,
+            quoteAssetDonation
+        );
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.expectRevert(ScenarioLiquidityAdapter.ScenarioLiquidityAdapterForcedRevert.selector);
+        pool.graduate();
+
+        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+    }
+
     function testFuzz_SuccessfulBuysBelowGraduationCapacityMatchQuotes(uint256 usdcAmountIn) public {
         uint256 threshold = 1_000_000;
         (LaunchPoolHarness pool, LibrARCToken token) =
@@ -1937,6 +2428,59 @@ contract LaunchPoolTest is Test, IERC20Errors {
         tokenAmountOut = pool.buyForFactory(buyer, usdcAmountIn, minTokenAmountOut, deadline, recipient);
     }
 
+    function _prepareGraduationFixture(
+        address adapterAddress,
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve,
+        uint256 accruedProtocolFees,
+        uint256 launchTokenDonation,
+        uint256 quoteAssetDonation
+    ) internal returns (LaunchPoolHarness pool, LibrARCToken token) {
+        uint256 fixedSupply = tokenSupply();
+
+        token = new LibrARCToken("LibrARC", "LARC", address(this));
+        pool = _deployPoolWithAdapter(
+            address(token),
+            token.FIXED_SUPPLY(),
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD,
+            adapterAddress
+        );
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        assertLe(realTokenReserve, fixedSupply);
+        assertLe(launchTokenDonation, fixedSupply - realTokenReserve);
+
+        uint256 tokenAmountToMoveOut = fixedSupply - realTokenReserve;
+        if (tokenAmountToMoveOut > 0) {
+            vm.prank(address(pool));
+            assertTrue(token.transfer(ALICE, tokenAmountToMoveOut));
+        }
+
+        if (launchTokenDonation > 0) {
+            vm.prank(ALICE);
+            assertTrue(token.transfer(address(pool), launchTokenDonation));
+        }
+
+        if (realUsdcReserve + accruedProtocolFees > 0) {
+            quoteAsset.mint(address(pool), realUsdcReserve + accruedProtocolFees);
+        }
+
+        if (quoteAssetDonation > 0) {
+            quoteAsset.mint(ALICE, quoteAssetDonation);
+            vm.prank(ALICE);
+            assertTrue(quoteAsset.transfer(address(pool), quoteAssetDonation));
+        }
+
+        pool.exposedSetAccountedState(
+            realUsdcReserve, realTokenReserve, accruedProtocolFees, LaunchPool.PoolStatus.GraduationPending
+        );
+    }
+
     function _deployCustomPool(
         address launchTokenAddress,
         address quoteTokenAddress,
@@ -1947,12 +2491,36 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 sellFeeBps,
         uint256 graduationThreshold
     ) internal returns (LaunchPoolHarness pool) {
+        pool = _deployCustomPoolWithAdapter(
+            launchTokenAddress,
+            quoteTokenAddress,
+            totalTokenSupply,
+            virtualUsdcReserve,
+            virtualTokenReserve,
+            buyFeeBps,
+            sellFeeBps,
+            graduationThreshold,
+            address(liquidityAdapter)
+        );
+    }
+
+    function _deployCustomPoolWithAdapter(
+        address launchTokenAddress,
+        address quoteTokenAddress,
+        uint256 totalTokenSupply,
+        uint256 virtualUsdcReserve,
+        uint256 virtualTokenReserve,
+        uint256 buyFeeBps,
+        uint256 sellFeeBps,
+        uint256 graduationThreshold,
+        address adapterAddress
+    ) internal returns (LaunchPoolHarness pool) {
         pool = new LaunchPoolHarness(
             address(this),
             launchTokenAddress,
             quoteTokenAddress,
             address(feeVault),
-            address(liquidityAdapter),
+            adapterAddress,
             LIQUIDITY_RECIPIENT,
             totalTokenSupply,
             virtualUsdcReserve,
@@ -2081,6 +2649,29 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
     }
 
+    function _deployPoolWithAdapter(
+        address launchTokenAddress,
+        uint256 totalTokenSupply,
+        uint256 virtualUsdcReserve,
+        uint256 virtualTokenReserve,
+        uint256 buyFeeBps,
+        uint256 sellFeeBps,
+        uint256 graduationThreshold,
+        address adapterAddress
+    ) internal returns (LaunchPoolHarness pool) {
+        pool = _deployCustomPoolWithAdapter(
+            launchTokenAddress,
+            address(quoteAsset),
+            totalTokenSupply,
+            virtualUsdcReserve,
+            virtualTokenReserve,
+            buyFeeBps,
+            sellFeeBps,
+            graduationThreshold,
+            adapterAddress
+        );
+    }
+
     function _fundPoolExact(LaunchPoolHarness pool, LibrARCToken token) internal {
         assertTrue(token.transfer(address(pool), token.FIXED_SUPPLY()));
     }
@@ -2131,5 +2722,24 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         assertGe(pool.quoteAsset().balanceOf(address(pool)), state.realUsdcReserve + state.accruedProtocolFees);
         assertGe(pool.launchToken().balanceOf(address(pool)), state.realTokenReserve);
+    }
+
+    function _assertGraduationRollback(
+        LaunchPoolHarness pool,
+        BondingCurveMath.CurveState memory expectedState,
+        uint256 expectedLaunchTokenBalance,
+        uint256 expectedQuoteAssetBalance,
+        address adapterAddress
+    ) internal view {
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.GraduationPending));
+        _assertCurveStateEq(pool.curveState(), expectedState);
+        assertEq(pool.launchToken().balanceOf(address(pool)), expectedLaunchTokenBalance);
+        assertEq(pool.quoteAsset().balanceOf(address(pool)), expectedQuoteAssetBalance);
+        assertEq(pool.launchToken().allowance(address(pool), adapterAddress), 0);
+        assertEq(pool.quoteAsset().allowance(address(pool), adapterAddress), 0);
+    }
+
+    function tokenSupply() internal pure returns (uint256) {
+        return FIXED_SUPPLY;
     }
 }
