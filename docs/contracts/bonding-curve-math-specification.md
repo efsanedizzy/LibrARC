@@ -383,6 +383,8 @@ Reserve safety rules:
 Graduation threshold evaluation uses:
 
 - `realUsdcReserve` only
+- Arc USDC ERC-20 6-decimal units only
+- a threshold greater than zero
 
 Explicit exclusions:
 
@@ -390,9 +392,31 @@ Explicit exclusions:
 - direct Arc USDC donations are excluded because they do not update internal accounting
 - direct token donations are excluded because they do not update internal accounting
 
+Buy-capacity rule:
+
+- `nextRealUsdcReserve = currentRealUsdcReserve + netUsdcIn`
+- a buy is accepted only when `nextRealUsdcReserve <= graduationThreshold`
+- equality is allowed
+- only values above the threshold revert
+- no reserve overshoot is permitted
+- no partial fill is permitted
+- no automatic refund is permitted
+- the user must submit a smaller input when the buy exceeds the remaining capacity
+- creator initial purchases follow the exact same rule as public buys
+- slippage and deadline protections still apply
+
 Graduation trigger rule:
 
-- once the threshold is reached after a successful buy, pool state changes from `Active` to `GraduationPending`
+- when `nextRealUsdcReserve == graduationThreshold` after a successful buy, pool state changes from `Active` to `GraduationPending`
+
+Revert effects for threshold-exceeding buys:
+
+- no USDC is transferred
+- no launch tokens are transferred
+- no fees are collected
+- internal reserves do not change
+- graduation state does not change
+- no successful trade event is emitted
 
 State implications:
 
@@ -402,15 +426,7 @@ State implications:
 Unresolved item:
 
 - exact graduation threshold remains unresolved
-- the final buy that crosses the graduation threshold remains unresolved
-
-Graduation-crossing final-buy policy options:
-
-- accept full input and permit reserve overshoot
-- partially fill and refund excess
-- reject an input that exceeds the remaining reserve capacity
-
-One policy must be finalized before `LaunchPool` implementation.
+- the UI may later quote the remaining capacity, but the contract remains the source of truth
 
 ## 14. Mathematical Invariants
 
@@ -437,6 +453,7 @@ Additional derived invariants:
 - `effectiveUsdcReserve` and `effectiveTokenReserve` remain strictly positive if initialization parameters are valid
 - fee sweeping cannot change quotes
 - fee sweeping cannot change graduation eligibility
+- if `nextRealUsdcReserve > graduationThreshold`, the buy reverts before any asset transfer or state change
 
 ## 15. Security Requirements
 
@@ -479,7 +496,7 @@ Deterministic tests must cover at minimum:
 - donation balances remaining excluded from pricing and accounting
 - graduation threshold uses `realUsdcReserve` only
 - graduation ignores `accruedProtocolFees`
-- graduation-crossing buy policy once finalized
+- threshold-exceeding buys reverting without side effects
 - creator initial purchase matches the same buy equation as public buy
 
 ## 17. Fuzz-Test Requirements
@@ -500,7 +517,8 @@ Fuzz tests must cover:
 - boundary cases where buy output approaches `realTokenReserve`
 - boundary cases where gross sell output approaches `realUsdcReserve`
 - graduation threshold boundary conditions after successful buys
-- graduation-crossing buy policy once finalized
+- equality with the graduation threshold succeeding
+- values above the graduation threshold reverting without side effects
 
 ## 18. Invariant-Test Requirements
 
@@ -531,7 +549,6 @@ The following parameters remain unresolved and block final BondingCurve implemen
 - sell fee
 - hard maximum fee
 - graduation threshold
-- graduation-crossing final-buy behavior
 - minimum Arc USDC trade
 - minimum token trade
 - graduation asset proportions and destinations
@@ -566,6 +583,8 @@ This document does not invent numerical values for any of those items.
 - revert on zero net reserve contribution after fee
 - reject outputs above available real reserves
 - exclude `accruedProtocolFees` from graduation calculations
+- reject buys when `nextRealUsdcReserve > graduationThreshold`
+- allow buys when `nextRealUsdcReserve == graduationThreshold` and then transition to `GraduationPending`
 - ensure direct donations do not modify internal accounting
 - ensure internal accounting, not raw balances, drives pricing
 - ensure pool raw balances always cover accounted reserves

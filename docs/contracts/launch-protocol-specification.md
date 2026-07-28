@@ -299,18 +299,15 @@ Constraints:
 1. Trader specifies USDC input, minimum token output, and deadline.
 2. Pool validates:
    - pool state is `Active`
-   - buy path is not paused
    - deadline not expired
    - input is non-zero
-3. Pool computes gross token output using the curve and internal accounting variables.
-4. Pool applies fee logic if enabled.
-5. Pool verifies resulting token output is non-zero and satisfies slippage protection.
-6. Pool updates internal accounting.
-7. Pool pulls Arc USDC with `SafeERC20`.
-8. Pool transfers launch tokens to the trader.
-9. Pool emits buy and reserve-update events.
-10. Pool checks graduation eligibility using `realUsdcReserve` excluding `accruedProtocolFees`.
-11. If the threshold is reached, pool transitions from `Active` to `GraduationPending`.
+3. Pool computes the buy quote and fee using the curve and internal accounting variables.
+4. Pool verifies resulting token output is non-zero and satisfies slippage protection.
+5. Pool validates:
+   - `quote.nextState.realUsdcReserve <= graduationThreshold`
+6. Pool transfers Arc USDC in and launch tokens out and applies state changes atomically.
+7. If `quote.nextState.realUsdcReserve == graduationThreshold`, pool transitions from `Active` to `GraduationPending`.
+8. Pool emits buy, reserve-update, and state-transition events where applicable.
 
 ### 8.2 Sell
 
@@ -367,7 +364,7 @@ Unresolved protocol parameters:
 - exact rounding implementation details inside the future `BondingCurve` logic
 - virtual token reserve value
 - virtual USDC reserve value
-- minimum trade amount
+- minimum trade amounts
 
 This document intentionally does not finalize those numerical or formula-specific values.
 
@@ -387,6 +384,8 @@ Rules:
 - all launch-token accounting uses launch-token 18-decimal units
 - native 18-decimal gas-token representations must never be mixed into pool accounting
 - pricing must use internal accounting variables, not raw token `balanceOf` values
+- graduation threshold must be greater than zero
+- graduation threshold uses Arc USDC ERC-20 6-decimal units
 - graduation threshold uses `realUsdcReserve` excluding `accruedProtocolFees`
 - protocol-owned fees must be separable from user-backed curve reserves
 - reserve accounting must be independently testable from UI assumptions
@@ -396,6 +395,7 @@ Donation handling:
 
 - accidental direct Arc USDC donations must not alter pricing or graduation eligibility
 - accidental direct launch-token donations must not alter pricing or graduation eligibility
+- direct Arc USDC donations do not count toward the graduation threshold because they do not update internal accounting
 - in MVP, accidental direct donations should be treated as unrecoverable unless a narrowly scoped excess-token recovery rule is later added
 - any future excess-token recovery rule must prove that recovered assets are not part of accounted reserves
 - no rescue function may withdraw accounted Arc USDC reserves
@@ -417,6 +417,8 @@ Resolved rules:
 
 - threshold exists
 - threshold is configurable
+- threshold must be greater than zero
+- threshold uses Arc USDC ERC-20 6-decimal units
 - graduation becomes permissionless once the threshold is reached
 - no creator, administrator, or graduation role may block an eligible graduation
 - liquidity migration must route through `ILiquidityAdapter`
@@ -434,7 +436,18 @@ State machine:
 Transition rules:
 
 - only `Active` allows buys and sells
-- reaching the threshold moves the pool to `GraduationPending`
+- a buy is accepted only when `nextRealUsdcReserve <= graduationThreshold`
+- `nextRealUsdcReserve = currentRealUsdcReserve + netUsdcIn`
+- equality with the threshold is allowed
+- only values above the threshold revert
+- no reserve overshoot is permitted
+- no partial fill is permitted
+- no automatic refund is permitted
+- when a buy exceeds the remaining capacity, the user must submit a smaller input
+- creator initial purchases follow exactly the same rule as public buys
+- slippage and deadline protections still apply
+- a reverted threshold-crossing buy must not transfer USDC, transfer launch tokens, collect fees, change internal reserves, change graduation state, or emit a successful trade event
+- reaching the threshold exactly after a successful buy moves the pool to `GraduationPending`
 - buys and sells permanently stop when `GraduationPending` begins
 - `graduate()` is permissionless and retryable while `GraduationPending`
 - adapter failure leaves the pool in `GraduationPending`
@@ -449,6 +462,19 @@ Role constraints:
 - the graduation role may manage approved adapter configuration
 - the graduation role must not be required to call `graduate()`
 - adapter changes must not affect pools that have already entered `GraduationPending`
+
+Required LaunchPool buy-side validation order:
+
+1. Validate pool is `Active`.
+2. Validate deadline.
+3. Validate non-zero input.
+4. Compute the buy quote and fee.
+5. Validate slippage.
+6. Validate:
+   - `quote.nextState.realUsdcReserve <= graduationThreshold`
+7. Transfer assets and apply state changes atomically.
+8. If the new reserve equals the threshold, transition to `GraduationPending`.
+9. Emit trade and state-transition events.
 
 ## 12. Fee Model
 
@@ -598,9 +624,16 @@ Minimum error categories:
 - already graduated
 - not yet eligible for graduation
 - reserve threshold not met
+- graduation threshold exceeded
 - adapter migration failed
 
 Exact Solidity error names are implementation details and are intentionally not specified here.
+
+`GraduationThresholdExceeded` should conceptually expose:
+
+- `currentRealUsdcReserve`
+- `netUsdcIn`
+- `graduationThreshold`
 
 ## 17. Security Invariants
 
@@ -644,6 +677,7 @@ Exact Solidity error names are implementation details and are intentionally not 
 - direct donations do not change graduation eligibility
 - post-threshold curve trading is permanently disabled once `GraduationPending` begins
 - graduation cannot be repeated to extract value multiple times
+- the UI may later quote the remaining Arc USDC capacity before graduation, but the contract remains the source of truth
 
 ## 19. Testing Requirements
 
@@ -666,6 +700,7 @@ Minimum deterministic test coverage must include:
 - deadline protection on buys and sells
 - zero-input reverts
 - zero-output reverts
+- threshold-exceeding buys revert without side effects
 - post-`Active` trading reverts
 - threshold transition into `GraduationPending`
 - permissionless `graduate()` behavior
@@ -724,7 +759,7 @@ The following parameters are intentionally unresolved and must remain unset in t
 - hard maximum fee value
 - destination and proportions of Arc USDC and unused tokens at graduation
 - exact adapter behavior details
-- minimum trade amount
+- minimum trade amounts
 
 These unresolved items must be finalized in a later parameterization and implementation review before production deployment.
 
@@ -740,7 +775,7 @@ The following items are explicit blockers and must be finalized before `LaunchPo
 - graduation threshold
 - destination and proportions of Arc USDC and unused tokens at graduation
 - adapter behavior
-- minimum trade amount
+- minimum trade amounts
 
 No numerical values are invented in this document for any of those items.
 
