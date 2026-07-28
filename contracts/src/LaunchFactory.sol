@@ -4,17 +4,22 @@ pragma solidity 0.8.26;
 import {
     AccessControlDefaultAdminRules
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {BondingCurveMath} from "./libraries/BondingCurveMath.sol";
 import {LaunchPool} from "./LaunchPool.sol";
 import {LibrARCToken} from "./LibrARCToken.sol";
 
 /// @title LaunchFactory
-/// @notice Permissionless factory for atomically deploying LibrARC fixed-supply tokens and dedicated launch pools.
-/// @dev This Phase 1 implementation only handles launch creation, registry writes, metadata-reference validation,
-/// and launch-creation pause controls. It does not implement creator initial purchases, graduation, or fee sweeping.
-contract LaunchFactory is AccessControlDefaultAdminRules, Pausable {
+/// @notice Permissionless factory for deploying fixed-supply LibrARC tokens and dedicated LaunchPools.
+/// @dev This Phase 2 implementation supports plain launch creation and atomic launch creation with an optional
+/// creator initial purchase that reuses the exact same LaunchPool buy path as public traders.
+contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     /// @notice Registry record stored for every successful launch.
     /// @param creator The address that requested the launch.
     /// @param token The deployed fixed-supply launch-token address.
@@ -41,9 +46,15 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable {
     error ZeroMaxMetadataUriLength();
     error EmptyMetadataUri();
     error MetadataUriTooLong(uint256 actualLength, uint256 maxLength);
+    error ZeroInitialPurchase();
+    error ZeroRecipient();
+    error ExpiredDeadline(uint256 currentTimestamp, uint256 deadline);
     error FactoryTokenBalanceNotZero(uint256 remainingBalance);
     error InvalidPoolInitialization();
     error TokenTransferFailed();
+    error UnexpectedQuoteAssetBalanceIncrease(uint256 balanceBefore, uint256 balanceAfter, uint256 expectedIncrease);
+    error FactoryQuoteAssetBalanceMismatch(uint256 expectedBalance, uint256 actualBalance);
+    error FactoryAllowanceNotCleared(uint256 remainingAllowance);
     error NativeAssetNotAccepted();
 
     /// @notice Role allowed to pause and unpause new launch creation.
@@ -67,6 +78,22 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable {
         string symbol,
         string metadataUri,
         bytes32 metadataHash
+    );
+
+    /// @notice Emitted after a creator launch is followed by an atomic initial pool buy in the same transaction.
+    /// @param launchId The monotonically increasing launch identifier.
+    /// @param creator The creator whose purchase was executed.
+    /// @param recipient The address receiving the purchased launch tokens.
+    /// @param launchPool The LaunchPool that executed the initial buy.
+    /// @param usdcAmountIn The gross Arc USDC amount supplied for the purchase.
+    /// @param tokenAmountOut The launch-token output amount received by `recipient`.
+    event CreatorInitialPurchaseExecuted(
+        uint256 indexed launchId,
+        address indexed creator,
+        address indexed recipient,
+        address launchPool,
+        uint256 usdcAmountIn,
+        uint256 tokenAmountOut
     );
 
     /// @notice The protocol quote-asset address configured for every new pool.
@@ -183,11 +210,96 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable {
     function createLaunch(string calldata name_, string calldata symbol_, string calldata metadataUri_)
         external
         whenNotPaused
+        nonReentrant
+        returns (address launchToken, address launchPool, uint256 launchId)
+    {
+        _validateLaunchParameters(name_, symbol_, metadataUri_);
+        return _createLaunch(msg.sender, name_, symbol_, metadataUri_);
+    }
+
+    /// @notice Creates a new launch and executes an initial pool buy atomically for the creator.
+    /// @param name_ The ERC-20 token name for the new launch token.
+    /// @param symbol_ The ERC-20 token symbol for the new launch token.
+    /// @param metadataUri_ The off-chain metadata reference for indexing.
+    /// @param usdcAmountIn_ The gross Arc USDC amount to buy into the freshly created pool.
+    /// @param minTokenAmountOut_ The minimum acceptable launch-token output amount.
+    /// @param deadline_ The latest timestamp at which the creator buy remains valid.
+    /// @param recipient_ The address receiving the purchased launch tokens.
+    /// @return launchToken The deployed launch-token address.
+    /// @return launchPool The deployed LaunchPool address.
+    /// @return launchId The new monotonic launch identifier.
+    /// @return tokenAmountOut The exact launch-token output amount purchased for `recipient_`.
+    function createLaunchAndBuy(
+        string calldata name_,
+        string calldata symbol_,
+        string calldata metadataUri_,
+        uint256 usdcAmountIn_,
+        uint256 minTokenAmountOut_,
+        uint256 deadline_,
+        address recipient_
+    )
+        external
+        whenNotPaused
+        nonReentrant
+        returns (address launchToken, address launchPool, uint256 launchId, uint256 tokenAmountOut)
+    {
+        if (usdcAmountIn_ == 0) revert ZeroInitialPurchase();
+        if (recipient_ == address(0)) revert ZeroRecipient();
+        if (block.timestamp > deadline_) revert ExpiredDeadline(block.timestamp, deadline_);
+
+        _validateLaunchParameters(name_, symbol_, metadataUri_);
+
+        IERC20 quoteAssetToken = IERC20(quoteAsset);
+        uint256 balanceBefore = quoteAssetToken.balanceOf(address(this));
+
+        quoteAssetToken.safeTransferFrom(msg.sender, address(this), usdcAmountIn_);
+
+        uint256 balanceAfterPull = quoteAssetToken.balanceOf(address(this));
+        if (balanceAfterPull != balanceBefore + usdcAmountIn_) {
+            revert UnexpectedQuoteAssetBalanceIncrease(balanceBefore, balanceAfterPull, usdcAmountIn_);
+        }
+
+        (launchToken, launchPool, launchId) = _createLaunch(msg.sender, name_, symbol_, metadataUri_);
+
+        quoteAssetToken.forceApprove(launchPool, usdcAmountIn_);
+        tokenAmountOut = LaunchPool(payable(launchPool))
+            .buyForFactory(msg.sender, usdcAmountIn_, minTokenAmountOut_, deadline_, recipient_);
+        quoteAssetToken.forceApprove(launchPool, 0);
+
+        uint256 balanceAfterBuy = quoteAssetToken.balanceOf(address(this));
+        if (balanceAfterBuy != balanceBefore) {
+            revert FactoryQuoteAssetBalanceMismatch(balanceBefore, balanceAfterBuy);
+        }
+
+        uint256 remainingAllowance = quoteAssetToken.allowance(address(this), launchPool);
+        if (remainingAllowance != 0) revert FactoryAllowanceNotCleared(remainingAllowance);
+
+        emit CreatorInitialPurchaseExecuted(launchId, msg.sender, recipient_, launchPool, usdcAmountIn_, tokenAmountOut);
+    }
+
+    /// @notice Pauses new launch creation without affecting existing launch pools.
+    function pauseLaunchCreation() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /// @notice Unpauses new launch creation.
+    function unpauseLaunchCreation() external onlyRole(PAUSER_ROLE) {
+        _unpause();
+    }
+
+    receive() external payable {
+        revert NativeAssetNotAccepted();
+    }
+
+    fallback() external payable {
+        revert NativeAssetNotAccepted();
+    }
+
+    function _createLaunch(address creator_, string memory name_, string memory symbol_, string memory metadataUri_)
+        internal
         returns (address launchToken, address launchPool, uint256 launchId)
     {
         bytes memory metadataUriBytes = bytes(metadataUri_);
-        _validateMetadataUri(metadataUriBytes);
-
         bytes32 metadataHash = keccak256(metadataUriBytes);
 
         LibrARCToken tokenInstance = new LibrARCToken(name_, symbol_, address(this));
@@ -231,32 +343,25 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable {
         launchId = launchCount + 1;
 
         launchById[launchId] =
-            LaunchRecord({creator: msg.sender, token: launchToken, pool: launchPool, metadataHash: metadataHash});
+            LaunchRecord({creator: creator_, token: launchToken, pool: launchPool, metadataHash: metadataHash});
         poolByToken[launchToken] = launchPool;
         tokenByPool[launchPool] = launchToken;
         isLibrarcToken[launchToken] = true;
         isLibrarcPool[launchPool] = true;
         launchCount = launchId;
 
-        emit LaunchCreated(launchId, msg.sender, launchToken, launchPool, name_, symbol_, metadataUri_, metadataHash);
+        emit LaunchCreated(launchId, creator_, launchToken, launchPool, name_, symbol_, metadataUri_, metadataHash);
     }
 
-    /// @notice Pauses new launch creation without affecting existing launch pools.
-    function pauseLaunchCreation() external onlyRole(PAUSER_ROLE) {
-        _pause();
-    }
-
-    /// @notice Unpauses new launch creation.
-    function unpauseLaunchCreation() external onlyRole(PAUSER_ROLE) {
-        _unpause();
-    }
-
-    receive() external payable {
-        revert NativeAssetNotAccepted();
-    }
-
-    fallback() external payable {
-        revert NativeAssetNotAccepted();
+    function _validateLaunchParameters(string memory name_, string memory symbol_, string memory metadataUri_)
+        internal
+        view
+    {
+        if (bytes(name_).length == 0) {
+            revert LibrARCToken.LibrARCTokenEmptyName();
+        }
+        if (bytes(symbol_).length == 0) revert LibrARCToken.LibrARCTokenEmptySymbol();
+        _validateMetadataUri(bytes(metadataUri_));
     }
 
     function _validateMetadataUri(bytes memory metadataUriBytes) internal view {

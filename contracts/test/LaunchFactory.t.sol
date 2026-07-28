@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
@@ -22,9 +23,49 @@ contract MockQuoteAsset is ERC20 {
     function decimals() public pure override returns (uint8) {
         return 6;
     }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
-contract LaunchFactoryTest is Test {
+contract FeeOnTransferQuoteAsset is ERC20 {
+    uint256 internal constant TRANSFER_FEE_BPS = 100;
+    address internal constant FEE_SINK = address(0xDEAD);
+
+    constructor() ERC20("Arc USDC", "USDC") {}
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function transfer(address to, uint256 value) public override returns (bool) {
+        _transferWithFee(_msgSender(), to, value);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
+        _spendAllowance(from, _msgSender(), value);
+        _transferWithFee(from, to, value);
+        return true;
+    }
+
+    function _transferWithFee(address from, address to, uint256 value) internal {
+        uint256 fee = value * TRANSFER_FEE_BPS / 10_000;
+        uint256 netAmount = value - fee;
+
+        _update(from, to, netAmount);
+        if (fee > 0) {
+            _update(from, FEE_SINK, fee);
+        }
+    }
+}
+
+contract LaunchFactoryTest is Test, IERC20Errors {
     event LaunchCreated(
         uint256 indexed launchId,
         address indexed creator,
@@ -35,6 +76,25 @@ contract LaunchFactoryTest is Test {
         string metadataUri,
         bytes32 metadataHash
     );
+    event CreatorInitialPurchaseExecuted(
+        uint256 indexed launchId,
+        address indexed creator,
+        address indexed recipient,
+        address launchPool,
+        uint256 usdcAmountIn,
+        uint256 tokenAmountOut
+    );
+    event BuyExecuted(
+        address indexed buyer,
+        address indexed recipient,
+        uint256 usdcAmountIn,
+        uint256 fee,
+        uint256 netUsdcIn,
+        uint256 tokenAmountOut,
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve
+    );
+    event GraduationPendingEntered(uint256 realUsdcReserve, uint256 graduationThreshold);
 
     address internal constant INITIAL_ADMIN = address(0xA11CE);
     address internal constant CREATOR = address(0xBEEF);
@@ -49,6 +109,7 @@ contract LaunchFactoryTest is Test {
     uint256 internal constant DEFAULT_SELL_FEE_BPS = 300;
     uint256 internal constant DEFAULT_GRADUATION_THRESHOLD = 10_000_000;
     uint256 internal constant DEFAULT_MAX_METADATA_URI_LENGTH = 120;
+    uint256 internal constant FIXED_SUPPLY = 1_000_000_000 * 10 ** 18;
 
     MockQuoteAsset internal quoteAsset;
     FeeVault internal feeVault;
@@ -518,6 +579,325 @@ contract LaunchFactoryTest is Test {
         assertEq(uint256(LaunchPool(payable(launchPool)).status()), uint256(LaunchPool.PoolStatus.Active));
     }
 
+    function test_CreateLaunchAndBuySucceedsForCreatorRecipient() public {
+        string memory name_ = "LibrARC";
+        string memory symbol_ = "LARC";
+        string memory metadataUri_ = "ipfs://librarc/launch/with-buy";
+        uint256 usdcAmountIn = 100_000;
+        uint256 factoryBalanceBefore = quoteAsset.balanceOf(address(factory));
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        bytes32 metadataHash = keccak256(bytes(metadataUri_));
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(factory), usdcAmountIn);
+
+        vm.recordLogs();
+        vm.prank(CREATOR);
+        (address launchToken, address launchPool, uint256 launchId, uint256 tokenAmountOut) = factory.createLaunchAndBuy(
+            name_, symbol_, metadataUri_, usdcAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CREATOR
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        LaunchPool pool = LaunchPool(payable(launchPool));
+        LibrARCToken token = LibrARCToken(launchToken);
+
+        assertEq(launchId, 1);
+        assertEq(factory.launchCount(), 1);
+        assertEq(tokenAmountOut, expectedQuote.tokenAmountOut);
+        assertEq(quoteAsset.balanceOf(CREATOR), 0);
+        assertEq(quoteAsset.balanceOf(address(factory)), factoryBalanceBefore);
+        assertEq(quoteAsset.allowance(address(factory), launchPool), 0);
+        assertEq(quoteAsset.balanceOf(launchPool), usdcAmountIn);
+        assertEq(token.balanceOf(CREATOR), tokenAmountOut);
+        assertEq(token.balanceOf(launchPool), token.FIXED_SUPPLY() - tokenAmountOut);
+        _assertCurveStateEq(pool.curveState(), expectedQuote.nextState);
+
+        _assertLaunchCreatedLog(
+            logs, launchId, CREATOR, launchToken, launchPool, name_, symbol_, metadataUri_, metadataHash
+        );
+        _assertPoolBuyExecutedLog(logs, launchPool, CREATOR, CREATOR, usdcAmountIn, expectedQuote);
+        _assertCreatorInitialPurchaseExecutedLog(
+            logs, launchId, CREATOR, CREATOR, launchPool, usdcAmountIn, tokenAmountOut
+        );
+    }
+
+    function test_CreateLaunchAndBuySupportsAlternateRecipient() public {
+        uint256 usdcAmountIn = 75_000;
+        address recipient = OTHER_ACCOUNT;
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(factory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        (address launchToken,, uint256 launchId, uint256 tokenAmountOut) = factory.createLaunchAndBuy(
+            "Alt Recipient",
+            "ALTR",
+            "ipfs://launch/alt-recipient",
+            usdcAmountIn,
+            expectedQuote.tokenAmountOut,
+            block.timestamp,
+            recipient
+        );
+
+        assertEq(launchId, 1);
+        assertEq(tokenAmountOut, expectedQuote.tokenAmountOut);
+        assertEq(LibrARCToken(launchToken).balanceOf(CREATOR), 0);
+        assertEq(LibrARCToken(launchToken).balanceOf(recipient), tokenAmountOut);
+    }
+
+    function test_CreateLaunchAndBuyUsesSamePricingAsEquivalentPublicBuy() public {
+        uint256 usdcAmountIn = 120_000;
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(factory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        (, address launchPool,, uint256 tokenAmountOut) = factory.createLaunchAndBuy(
+            "Price Compare",
+            "PRC",
+            "ipfs://launch/price-compare",
+            usdcAmountIn,
+            expectedQuote.tokenAmountOut,
+            block.timestamp,
+            CREATOR
+        );
+
+        (uint256 publicTokenAmountOut, BondingCurveMath.CurveState memory publicState) =
+            _executeEquivalentPublicBuy(usdcAmountIn, CREATOR, CREATOR);
+
+        assertEq(tokenAmountOut, expectedQuote.tokenAmountOut);
+        assertEq(publicTokenAmountOut, tokenAmountOut);
+        _assertCurveStateEq(LaunchPool(payable(launchPool)).curveState(), publicState);
+    }
+
+    function test_CreateLaunchAndBuyZeroInitialPurchaseReverts() public {
+        vm.prank(CREATOR);
+        vm.expectRevert(LaunchFactory.ZeroInitialPurchase.selector);
+        factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", 0, 0, block.timestamp, CREATOR);
+
+        assertEq(factory.launchCount(), 0);
+        assertEq(quoteAsset.balanceOf(address(factory)), 0);
+    }
+
+    function test_CreateLaunchAndBuyZeroRecipientReverts() public {
+        vm.prank(CREATOR);
+        vm.expectRevert(LaunchFactory.ZeroRecipient.selector);
+        factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", 1, 0, block.timestamp, address(0));
+
+        assertEq(factory.launchCount(), 0);
+    }
+
+    function test_CreateLaunchAndBuyExpiredDeadlineReverts() public {
+        vm.warp(100);
+        vm.prank(CREATOR);
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.ExpiredDeadline.selector, uint256(100), uint256(99)));
+        factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", 1, 0, 99, CREATOR);
+
+        assertEq(factory.launchCount(), 0);
+    }
+
+    function test_CreateLaunchAndBuyMissingCreatorAllowanceReverts() public {
+        uint256 usdcAmountIn = 10_000;
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+
+        vm.prank(CREATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(factory), 0, usdcAmountIn)
+        );
+        factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", usdcAmountIn, 1, block.timestamp, CREATOR);
+
+        assertEq(factory.launchCount(), 0);
+        assertEq(quoteAsset.balanceOf(CREATOR), usdcAmountIn);
+        assertEq(quoteAsset.balanceOf(address(factory)), 0);
+    }
+
+    function test_CreateLaunchAndBuyInsufficientCreatorBalanceReverts() public {
+        uint256 usdcAmountIn = 10_000;
+
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(factory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, CREATOR, uint256(0), usdcAmountIn)
+        );
+        factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", usdcAmountIn, 1, block.timestamp, CREATOR);
+
+        assertEq(factory.launchCount(), 0);
+        assertEq(quoteAsset.balanceOf(address(factory)), 0);
+    }
+
+    function test_CreateLaunchAndBuySlippageFailureRevertsAtomically() public {
+        uint256 usdcAmountIn = 100_000;
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(factory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientTokenOutput.selector,
+                expectedQuote.tokenAmountOut + 1,
+                expectedQuote.tokenAmountOut
+            )
+        );
+        factory.createLaunchAndBuy(
+            "Token", "TOK", "ipfs://slippage", usdcAmountIn, expectedQuote.tokenAmountOut + 1, block.timestamp, CREATOR
+        );
+
+        assertEq(factory.launchCount(), 0);
+        assertEq(quoteAsset.balanceOf(CREATOR), usdcAmountIn);
+        assertEq(quoteAsset.balanceOf(address(factory)), 0);
+        _assertEmptyLaunchRecord(factory, 1);
+    }
+
+    function test_CreateLaunchAndBuyThresholdOvershootRevertsAtomically() public {
+        LaunchFactory thresholdFactory = _deployFactory(
+            INITIAL_ADMIN,
+            ADMIN_TRANSFER_DELAY,
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            LIQUIDITY_RECIPIENT,
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            0,
+            DEFAULT_SELL_FEE_BPS,
+            999,
+            DEFAULT_MAX_METADATA_URI_LENGTH
+        );
+        uint256 usdcAmountIn = 1000;
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(thresholdFactory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, 999)
+        );
+        thresholdFactory.createLaunchAndBuy(
+            "Threshold", "THR", "ipfs://threshold/overshoot", usdcAmountIn, 1, block.timestamp, CREATOR
+        );
+
+        assertEq(thresholdFactory.launchCount(), 0);
+        assertEq(quoteAsset.balanceOf(CREATOR), usdcAmountIn);
+        assertEq(quoteAsset.balanceOf(address(thresholdFactory)), 0);
+        _assertEmptyLaunchRecord(thresholdFactory, 1);
+    }
+
+    function test_CreateLaunchAndBuyThresholdEqualitySucceedsAndEntersGraduationPending() public {
+        LaunchFactory thresholdFactory = _deployFactory(
+            INITIAL_ADMIN,
+            ADMIN_TRANSFER_DELAY,
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            LIQUIDITY_RECIPIENT,
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            0,
+            DEFAULT_SELL_FEE_BPS,
+            1000,
+            DEFAULT_MAX_METADATA_URI_LENGTH
+        );
+        uint256 usdcAmountIn = 1000;
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(thresholdFactory, usdcAmountIn);
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(thresholdFactory), usdcAmountIn);
+
+        vm.recordLogs();
+        vm.prank(CREATOR);
+        (, address launchPool, uint256 launchId, uint256 tokenAmountOut) = thresholdFactory.createLaunchAndBuy(
+            "Threshold",
+            "THR",
+            "ipfs://threshold/equality",
+            usdcAmountIn,
+            expectedQuote.tokenAmountOut,
+            block.timestamp,
+            CREATOR
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(launchId, 1);
+        assertEq(tokenAmountOut, expectedQuote.tokenAmountOut);
+        assertEq(uint256(LaunchPool(payable(launchPool)).status()), uint256(LaunchPool.PoolStatus.GraduationPending));
+        _assertGraduationPendingLog(logs, launchPool, 1000);
+    }
+
+    function test_CreateLaunchAndBuyPreservesPreExistingFactoryQuoteAssetBalance() public {
+        uint256 donatedFactoryBalance = 42_000;
+        uint256 usdcAmountIn = 80_000;
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+
+        quoteAsset.mint(address(factory), donatedFactoryBalance);
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(factory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        (, address launchPool,, uint256 tokenAmountOut) = factory.createLaunchAndBuy(
+            "Donated Balance",
+            "DNT",
+            "ipfs://launch/donated-balance",
+            usdcAmountIn,
+            expectedQuote.tokenAmountOut,
+            block.timestamp,
+            CREATOR
+        );
+
+        assertEq(tokenAmountOut, expectedQuote.tokenAmountOut);
+        assertEq(quoteAsset.balanceOf(address(factory)), donatedFactoryBalance);
+        assertEq(quoteAsset.balanceOf(launchPool), usdcAmountIn);
+        assertEq(quoteAsset.allowance(address(factory), launchPool), 0);
+    }
+
+    function test_CreateLaunchAndBuyFeeOnTransferQuoteAssetRevertsOnUnexpectedBalanceDelta() public {
+        FeeOnTransferQuoteAsset feeOnTransferQuoteAsset = new FeeOnTransferQuoteAsset();
+        LaunchFactory feeOnTransferFactory = _deployFactory(
+            INITIAL_ADMIN,
+            ADMIN_TRANSFER_DELAY,
+            address(feeOnTransferQuoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            LIQUIDITY_RECIPIENT,
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD,
+            DEFAULT_MAX_METADATA_URI_LENGTH
+        );
+        uint256 usdcAmountIn = 100_000;
+
+        feeOnTransferQuoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        feeOnTransferQuoteAsset.approve(address(feeOnTransferFactory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchFactory.UnexpectedQuoteAssetBalanceIncrease.selector, uint256(0), uint256(99_000), usdcAmountIn
+            )
+        );
+        feeOnTransferFactory.createLaunchAndBuy(
+            "Fee Token", "FEE", "ipfs://launch/fee-on-transfer", usdcAmountIn, 1, block.timestamp, CREATOR
+        );
+
+        assertEq(feeOnTransferFactory.launchCount(), 0);
+        assertEq(feeOnTransferQuoteAsset.balanceOf(CREATOR), usdcAmountIn);
+        assertEq(feeOnTransferQuoteAsset.balanceOf(address(feeOnTransferFactory)), 0);
+    }
+
     function test_DirectNativeTransferReverts() public {
         vm.deal(address(this), 1 ether);
 
@@ -585,6 +965,111 @@ contract LaunchFactoryTest is Test {
                 LaunchPool(payable(launchPool)).curveState().realTokenReserve, LibrARCToken(launchToken).FIXED_SUPPLY()
             );
         }
+    }
+
+    function testFuzz_CreateLaunchAndBuyMatchesQuoteAndClearsAllowance(
+        uint256 usdcAmountIn,
+        address recipient,
+        bytes32 metadataSeed
+    ) public {
+        usdcAmountIn = bound(usdcAmountIn, 1, 1_000_000);
+        vm.assume(recipient != address(0));
+
+        string memory metadataUri_ = _alphanumericString(metadataSeed, 24);
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(factory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        (address launchToken, address launchPool, uint256 launchId, uint256 tokenAmountOut) = factory.createLaunchAndBuy(
+            "Fuzz Token", "FZTK", metadataUri_, usdcAmountIn, expectedQuote.tokenAmountOut, block.timestamp, recipient
+        );
+
+        assertEq(launchId, 1);
+        assertEq(tokenAmountOut, expectedQuote.tokenAmountOut);
+        assertEq(quoteAsset.allowance(address(factory), launchPool), 0);
+        assertEq(quoteAsset.balanceOf(address(factory)), 0);
+        assertEq(LibrARCToken(launchToken).balanceOf(recipient), tokenAmountOut);
+        _assertCurveStateEq(LaunchPool(payable(launchPool)).curveState(), expectedQuote.nextState);
+    }
+
+    function testFuzz_ThresholdCrossingCreateLaunchAndBuyRevertsAtomically(uint256 usdcAmountIn) public {
+        LaunchFactory thresholdFactory = _deployFactory(
+            INITIAL_ADMIN,
+            ADMIN_TRANSFER_DELAY,
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            LIQUIDITY_RECIPIENT,
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            0,
+            DEFAULT_SELL_FEE_BPS,
+            50_000,
+            DEFAULT_MAX_METADATA_URI_LENGTH
+        );
+        usdcAmountIn = bound(usdcAmountIn, 50_001, 100_000);
+
+        quoteAsset.mint(CREATOR, usdcAmountIn);
+        vm.prank(CREATOR);
+        quoteAsset.approve(address(thresholdFactory), usdcAmountIn);
+
+        vm.prank(CREATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, 50_000)
+        );
+        thresholdFactory.createLaunchAndBuy(
+            "Threshold Fuzz", "TFZ", "ipfs://launch/threshold-fuzz", usdcAmountIn, 1, block.timestamp, CREATOR
+        );
+
+        assertEq(thresholdFactory.launchCount(), 0);
+        assertEq(quoteAsset.balanceOf(address(thresholdFactory)), 0);
+        assertEq(quoteAsset.balanceOf(CREATOR), usdcAmountIn);
+    }
+
+    function testFuzz_MultipleSequentialCreateLaunchAndBuyCallsProduceMonotonicIds(
+        uint256 firstUsdcAmountIn,
+        uint256 secondUsdcAmountIn
+    ) public {
+        firstUsdcAmountIn = bound(firstUsdcAmountIn, 1, 500_000);
+        secondUsdcAmountIn = bound(secondUsdcAmountIn, 1, 500_000);
+
+        BondingCurveMath.BuyQuote memory firstQuote = _expectedInitialBuyQuote(factory, firstUsdcAmountIn);
+        BondingCurveMath.BuyQuote memory secondQuote = _expectedInitialBuyQuote(factory, secondUsdcAmountIn);
+
+        quoteAsset.mint(CREATOR, firstUsdcAmountIn + secondUsdcAmountIn);
+
+        vm.startPrank(CREATOR);
+        quoteAsset.approve(address(factory), firstUsdcAmountIn + secondUsdcAmountIn);
+        (, address firstPool, uint256 firstLaunchId, uint256 firstTokenAmountOut) = factory.createLaunchAndBuy(
+            "First Sequential",
+            "FSQ",
+            "ipfs://launch/first-sequential",
+            firstUsdcAmountIn,
+            firstQuote.tokenAmountOut,
+            block.timestamp,
+            CREATOR
+        );
+        (, address secondPool, uint256 secondLaunchId, uint256 secondTokenAmountOut) = factory.createLaunchAndBuy(
+            "Second Sequential",
+            "SSQ",
+            "ipfs://launch/second-sequential",
+            secondUsdcAmountIn,
+            secondQuote.tokenAmountOut,
+            block.timestamp,
+            CREATOR
+        );
+        vm.stopPrank();
+
+        assertEq(firstLaunchId, 1);
+        assertEq(secondLaunchId, 2);
+        assertEq(factory.launchCount(), 2);
+        assertEq(firstTokenAmountOut, firstQuote.tokenAmountOut);
+        assertEq(secondTokenAmountOut, secondQuote.tokenAmountOut);
+        assertEq(quoteAsset.allowance(address(factory), firstPool), 0);
+        assertEq(quoteAsset.allowance(address(factory), secondPool), 0);
     }
 
     function _deployDefaultFactory() internal returns (LaunchFactory) {
@@ -668,6 +1153,173 @@ contract LaunchFactoryTest is Test {
         assembly ("memory-safe") {
             selector := mload(add(revertData, 0x20))
         }
+    }
+
+    function _expectedInitialBuyQuote(LaunchFactory targetFactory, uint256 usdcAmountIn)
+        internal
+        view
+        returns (BondingCurveMath.BuyQuote memory quote)
+    {
+        quote = BondingCurveMath.quoteBuy(
+            BondingCurveMath.CurveState({
+                realUsdcReserve: 0,
+                realTokenReserve: FIXED_SUPPLY,
+                virtualUsdcReserve: targetFactory.virtualUsdcReserve(),
+                virtualTokenReserve: targetFactory.virtualTokenReserve(),
+                accruedProtocolFees: 0
+            }),
+            usdcAmountIn,
+            targetFactory.buyFeeBps()
+        );
+    }
+
+    function _executeEquivalentPublicBuy(uint256 usdcAmountIn, address buyer, address recipient)
+        internal
+        returns (uint256 tokenAmountOut, BondingCurveMath.CurveState memory state)
+    {
+        LibrARCToken token = new LibrARCToken("Public Compare", "PBC", address(this));
+        LaunchPool pool = new LaunchPool(
+            address(this),
+            address(token),
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            LIQUIDITY_RECIPIENT,
+            token.FIXED_SUPPLY(),
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+        assertTrue(token.transfer(address(pool), token.FIXED_SUPPLY()));
+        pool.initialize();
+
+        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        quoteAsset.mint(buyer, usdcAmountIn);
+
+        vm.prank(buyer);
+        quoteAsset.approve(address(pool), usdcAmountIn);
+
+        vm.prank(buyer);
+        tokenAmountOut = pool.buy(usdcAmountIn, expectedQuote.tokenAmountOut, block.timestamp, recipient);
+        state = pool.curveState();
+    }
+
+    function _assertCurveStateEq(BondingCurveMath.CurveState memory left, BondingCurveMath.CurveState memory right)
+        internal
+        pure
+    {
+        assertEq(left.realUsdcReserve, right.realUsdcReserve);
+        assertEq(left.realTokenReserve, right.realTokenReserve);
+        assertEq(left.virtualUsdcReserve, right.virtualUsdcReserve);
+        assertEq(left.virtualTokenReserve, right.virtualTokenReserve);
+        assertEq(left.accruedProtocolFees, right.accruedProtocolFees);
+    }
+
+    function _assertEmptyLaunchRecord(LaunchFactory targetFactory, uint256 launchId) internal view {
+        (address creatorRecord, address tokenRecord, address poolRecord, bytes32 metadataHashRecord) =
+            targetFactory.launchById(launchId);
+        assertEq(creatorRecord, address(0));
+        assertEq(tokenRecord, address(0));
+        assertEq(poolRecord, address(0));
+        assertEq(metadataHashRecord, bytes32(0));
+    }
+
+    function _assertPoolBuyExecutedLog(
+        Vm.Log[] memory logs,
+        address expectedLaunchPool,
+        address expectedBuyer,
+        address expectedRecipient,
+        uint256 expectedUsdcAmountIn,
+        BondingCurveMath.BuyQuote memory expectedQuote
+    ) internal {
+        bytes32 eventSignature = keccak256(
+            "BuyExecuted(address,address,uint256,uint256,uint256,uint256,uint256,uint256)"
+        );
+
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == expectedLaunchPool && logs[i].topics.length == 3
+                    && logs[i].topics[0] == eventSignature
+            ) {
+                assertEq(address(uint160(uint256(logs[i].topics[1]))), expectedBuyer);
+                assertEq(address(uint160(uint256(logs[i].topics[2]))), expectedRecipient);
+
+                (
+                    uint256 usdcAmountIn_,
+                    uint256 fee_,
+                    uint256 netUsdcIn_,
+                    uint256 tokenAmountOut_,
+                    uint256 realUsdcReserve_,
+                    uint256 realTokenReserve_
+                ) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256, uint256, uint256));
+
+                assertEq(usdcAmountIn_, expectedUsdcAmountIn);
+                assertEq(fee_, expectedQuote.fee);
+                assertEq(netUsdcIn_, expectedQuote.netUsdcIn);
+                assertEq(tokenAmountOut_, expectedQuote.tokenAmountOut);
+                assertEq(realUsdcReserve_, expectedQuote.nextState.realUsdcReserve);
+                assertEq(realTokenReserve_, expectedQuote.nextState.realTokenReserve);
+                return;
+            }
+        }
+
+        fail("BuyExecuted event not found");
+    }
+
+    function _assertCreatorInitialPurchaseExecutedLog(
+        Vm.Log[] memory logs,
+        uint256 expectedLaunchId,
+        address expectedCreator,
+        address expectedRecipient,
+        address expectedLaunchPool,
+        uint256 expectedUsdcAmountIn,
+        uint256 expectedTokenAmountOut
+    ) internal {
+        bytes32 eventSignature = keccak256(
+            "CreatorInitialPurchaseExecuted(uint256,address,address,address,uint256,uint256)"
+        );
+
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == address(factory) && logs[i].topics.length == 4 && logs[i].topics[0] == eventSignature
+            ) {
+                assertEq(uint256(logs[i].topics[1]), expectedLaunchId);
+                assertEq(address(uint160(uint256(logs[i].topics[2]))), expectedCreator);
+                assertEq(address(uint160(uint256(logs[i].topics[3]))), expectedRecipient);
+
+                (address launchPool_, uint256 usdcAmountIn_, uint256 tokenAmountOut_) =
+                    abi.decode(logs[i].data, (address, uint256, uint256));
+
+                assertEq(launchPool_, expectedLaunchPool);
+                assertEq(usdcAmountIn_, expectedUsdcAmountIn);
+                assertEq(tokenAmountOut_, expectedTokenAmountOut);
+                return;
+            }
+        }
+
+        fail("CreatorInitialPurchaseExecuted event not found");
+    }
+
+    function _assertGraduationPendingLog(Vm.Log[] memory logs, address expectedLaunchPool, uint256 expectedThreshold)
+        internal
+    {
+        bytes32 eventSignature = keccak256("GraduationPendingEntered(uint256,uint256)");
+
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == expectedLaunchPool && logs[i].topics.length == 1
+                    && logs[i].topics[0] == eventSignature
+            ) {
+                (uint256 realUsdcReserve_, uint256 graduationThreshold_) = abi.decode(logs[i].data, (uint256, uint256));
+                assertEq(realUsdcReserve_, expectedThreshold);
+                assertEq(graduationThreshold_, expectedThreshold);
+                return;
+            }
+        }
+
+        fail("GraduationPendingEntered event not found");
     }
 
     function _assertLaunchCreatedLog(

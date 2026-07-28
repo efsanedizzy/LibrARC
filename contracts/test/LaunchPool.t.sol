@@ -1004,6 +1004,84 @@ contract LaunchPoolTest is Test, IERC20Errors {
         _assertPoolSolvency(pool);
     }
 
+    function test_BuyForFactoryUnauthorizedCallerReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.prank(OTHER_ACCOUNT);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, OTHER_ACCOUNT, address(this)));
+        pool.buyForFactory(ALICE, 1, 0, block.timestamp, ALICE);
+    }
+
+    function test_BuyForFactoryExecutesNormalBuyPathForCreatorRecipientAndFactoryPayer() public {
+        uint256 buyAmountIn = 100_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
+        uint256 factoryQuoteBefore = quoteAsset.balanceOf(address(this));
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+
+        quoteAsset.mint(address(this), buyAmountIn);
+        quoteAsset.approve(address(pool), buyAmountIn);
+
+        vm.expectEmit(true, true, false, true, address(pool));
+        emit BuyExecuted(
+            ALICE,
+            CAROL,
+            buyAmountIn,
+            quote.fee,
+            quote.netUsdcIn,
+            quote.tokenAmountOut,
+            quote.nextState.realUsdcReserve,
+            quote.nextState.realTokenReserve
+        );
+
+        uint256 tokenAmountOut = pool.buyForFactory(ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, CAROL);
+
+        assertEq(tokenAmountOut, quote.tokenAmountOut);
+        assertEq(quoteAsset.balanceOf(address(this)), factoryQuoteBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), poolQuoteBefore + buyAmountIn);
+        assertEq(token.balanceOf(CAROL), quote.tokenAmountOut);
+        assertEq(token.balanceOf(ALICE), 0);
+        _assertCurveStateEq(pool.curveState(), quote.nextState);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_BuyForFactoryUsesSameQuoteAsPublicBuyFromEquivalentState() public {
+        uint256 buyAmountIn = 80_000;
+        (LaunchPoolHarness factoryPool, LibrARCToken factoryToken) = _deployDefaultPool();
+        _fundPoolExact(factoryPool, factoryToken);
+        factoryPool.initialize();
+
+        (LaunchPoolHarness publicPool, LibrARCToken publicToken) = _deployDefaultPool();
+        _fundPoolExact(publicPool, publicToken);
+        publicPool.initialize();
+
+        (BondingCurveMath.BuyQuote memory expectedQuote,) = factoryPool.quoteBuy(buyAmountIn);
+        uint256 factoryTokenAmountOut =
+            _buyFromFactory(factoryPool, ALICE, buyAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CAROL);
+        uint256 publicTokenAmountOut =
+            _buyFromPool(publicPool, ALICE, buyAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CAROL);
+
+        assertEq(factoryTokenAmountOut, expectedQuote.tokenAmountOut);
+        assertEq(publicTokenAmountOut, expectedQuote.tokenAmountOut);
+        _assertCurveStateEq(factoryPool.curveState(), publicPool.curveState());
+    }
+
+    function test_BuyForFactoryZeroBuyerReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        quoteAsset.mint(address(this), 1);
+        quoteAsset.approve(address(pool), 1);
+
+        vm.expectRevert(LaunchPool.ZeroBuyer.selector);
+        pool.buyForFactory(address(0), 1, 0, block.timestamp, ALICE);
+    }
+
     function test_BuyZeroRecipientReverts() public {
         (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
         _fundPoolExact(pool, token);
@@ -1013,6 +1091,17 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.prank(ALICE);
         vm.expectRevert(LaunchPool.ZeroRecipient.selector);
         pool.buy(1, 0, block.timestamp, address(0));
+    }
+
+    function test_BuyForFactoryZeroRecipientReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        quoteAsset.mint(address(this), 1);
+        quoteAsset.approve(address(pool), 1);
+
+        vm.expectRevert(LaunchPool.ZeroRecipient.selector);
+        pool.buyForFactory(ALICE, 1, 0, block.timestamp, address(0));
     }
 
     function test_BuyZeroInputReverts() public {
@@ -1035,6 +1124,18 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.prank(ALICE);
         vm.expectRevert(abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(100), uint256(99)));
         pool.buy(1, 0, 99, ALICE);
+    }
+
+    function test_BuyForFactoryExpiredDeadlineReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+        quoteAsset.mint(address(this), 1);
+        quoteAsset.approve(address(pool), 1);
+
+        vm.warp(100);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(100), uint256(99)));
+        pool.buyForFactory(ALICE, 1, 0, 99, ALICE);
     }
 
     function test_BuySlippageFailureRevertsWithoutStateChanges() public {
@@ -1062,6 +1163,35 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
         assertEq(token.balanceOf(address(pool)), poolTokenBefore);
         assertEq(token.balanceOf(ALICE), 0);
+    }
+
+    function test_BuyForFactorySlippageFailureRevertsWithoutStateChanges() public {
+        uint256 buyAmountIn = 50_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 factoryQuoteBefore = quoteAsset.balanceOf(address(this));
+        uint256 poolUsdcBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+
+        quoteAsset.mint(address(this), buyAmountIn);
+        quoteAsset.approve(address(pool), buyAmountIn);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientTokenOutput.selector, quote.tokenAmountOut + 1, quote.tokenAmountOut
+            )
+        );
+        pool.buyForFactory(ALICE, buyAmountIn, quote.tokenAmountOut + 1, block.timestamp, CAROL);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(quoteAsset.balanceOf(address(this)), factoryQuoteBefore + buyAmountIn);
+        assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
+        assertEq(token.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(token.balanceOf(CAROL), 0);
     }
 
     function test_BuyMissingAllowanceReverts() public {
@@ -1154,6 +1284,33 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(token.balanceOf(address(pool)), poolTokenBefore);
         assertEq(quoteAsset.balanceOf(ALICE), buyerUsdcBefore);
         assertEq(token.balanceOf(ALICE), 0);
+    }
+
+    function test_BuyForFactoryThresholdOvershootRevertsWithoutMutation() public {
+        (LaunchPoolHarness pool, LibrARCToken token) =
+            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999);
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolUsdcBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 factoryQuoteBefore = quoteAsset.balanceOf(address(this));
+
+        quoteAsset.mint(address(this), 1000);
+        quoteAsset.approve(address(pool), 1000);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999)
+        );
+        pool.buyForFactory(ALICE, 1000, 1, block.timestamp, CAROL);
+
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(quoteAsset.balanceOf(address(this)), factoryQuoteBefore + 1000);
+        assertEq(quoteAsset.balanceOf(address(pool)), poolUsdcBefore);
+        assertEq(token.balanceOf(address(pool)), poolTokenBefore);
+        assertEq(token.balanceOf(CAROL), 0);
     }
 
     function test_BuyWhileNotActiveReverts() public {
@@ -1765,6 +1922,19 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.prank(buyer);
         tokenAmountOut = pool.buy(usdcAmountIn, minTokenAmountOut, deadline, recipient);
+    }
+
+    function _buyFromFactory(
+        LaunchPoolHarness pool,
+        address buyer,
+        uint256 usdcAmountIn,
+        uint256 minTokenAmountOut,
+        uint256 deadline,
+        address recipient
+    ) internal returns (uint256 tokenAmountOut) {
+        quoteAsset.mint(address(this), usdcAmountIn);
+        quoteAsset.approve(address(pool), usdcAmountIn);
+        tokenAmountOut = pool.buyForFactory(buyer, usdcAmountIn, minTokenAmountOut, deadline, recipient);
     }
 
     function _deployCustomPool(

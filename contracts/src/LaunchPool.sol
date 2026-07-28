@@ -33,6 +33,7 @@ contract LaunchPool is ReentrancyGuard {
     error ZeroTotalTokenSupply();
     error ZeroVirtualUsdcReserve();
     error ZeroVirtualTokenReserve();
+    error ZeroBuyer();
     error InvalidBuyFeeBps();
     error InvalidSellFeeBps();
     error ZeroGraduationThreshold();
@@ -244,46 +245,29 @@ contract LaunchPool is ReentrancyGuard {
         nonReentrant
         returns (uint256 tokenAmountOut)
     {
-        _requireActiveStatus();
-        if (recipient == address(0)) revert ZeroRecipient();
-        if (block.timestamp > deadline) revert ExpiredDeadline(block.timestamp, deadline);
-        if (usdcAmountIn == 0) revert BondingCurveMath.ZeroInput();
+        tokenAmountOut = _executeBuy(msg.sender, msg.sender, recipient, usdcAmountIn, minTokenAmountOut, deadline);
+    }
 
-        BondingCurveMath.CurveState memory currentState = curveState();
-        BondingCurveMath.BuyQuote memory quote = BondingCurveMath.quoteBuy(currentState, usdcAmountIn, buyFeeBps);
-        tokenAmountOut = quote.tokenAmountOut;
-
-        if (tokenAmountOut < minTokenAmountOut) {
-            revert InsufficientTokenOutput(minTokenAmountOut, tokenAmountOut);
+    /// @notice Executes a factory-mediated buy that preserves the original creator as the recorded buyer.
+    /// @param buyer The original creator or user on whose behalf the factory is purchasing.
+    /// @param usdcAmountIn The gross quote-asset input amount in 6-decimal units.
+    /// @param minTokenAmountOut The minimum acceptable launch-token output amount.
+    /// @param deadline The latest timestamp at which the trade remains valid.
+    /// @param recipient The address receiving the launch tokens.
+    /// @return tokenAmountOut The exact launch-token output amount transferred to the recipient.
+    function buyForFactory(
+        address buyer,
+        uint256 usdcAmountIn,
+        uint256 minTokenAmountOut,
+        uint256 deadline,
+        address recipient
+    ) external nonReentrant returns (uint256 tokenAmountOut) {
+        if (msg.sender != factory) {
+            revert UnauthorizedFactory(msg.sender, factory);
         }
-        if (quote.nextState.realUsdcReserve > graduationThreshold) {
-            revert GraduationThresholdExceeded(currentState.realUsdcReserve, quote.netUsdcIn, graduationThreshold);
-        }
+        if (buyer == address(0)) revert ZeroBuyer();
 
-        _setCurveState(quote.nextState);
-
-        bool entersGraduationPending = quote.nextState.realUsdcReserve == graduationThreshold;
-        if (entersGraduationPending) {
-            status = PoolStatus.GraduationPending;
-        }
-
-        quoteAsset.safeTransferFrom(msg.sender, address(this), usdcAmountIn);
-        launchToken.safeTransfer(recipient, tokenAmountOut);
-
-        emit BuyExecuted(
-            msg.sender,
-            recipient,
-            usdcAmountIn,
-            quote.fee,
-            quote.netUsdcIn,
-            tokenAmountOut,
-            quote.nextState.realUsdcReserve,
-            quote.nextState.realTokenReserve
-        );
-
-        if (entersGraduationPending) {
-            emit GraduationPendingEntered(quote.nextState.realUsdcReserve, graduationThreshold);
-        }
+        tokenAmountOut = _executeBuy(msg.sender, buyer, recipient, usdcAmountIn, minTokenAmountOut, deadline);
     }
 
     /// @notice Executes a sell against the current internal bonding-curve state.
@@ -379,6 +363,56 @@ contract LaunchPool is ReentrancyGuard {
     /// @return active True only when the pool status is `Active`.
     function isTradingActive() external view returns (bool active) {
         active = status == PoolStatus.Active;
+    }
+
+    function _executeBuy(
+        address payer,
+        address buyer,
+        address recipient,
+        uint256 usdcAmountIn,
+        uint256 minTokenAmountOut,
+        uint256 deadline
+    ) internal returns (uint256 tokenAmountOut) {
+        _requireActiveStatus();
+        if (recipient == address(0)) revert ZeroRecipient();
+        if (block.timestamp > deadline) revert ExpiredDeadline(block.timestamp, deadline);
+        if (usdcAmountIn == 0) revert BondingCurveMath.ZeroInput();
+
+        BondingCurveMath.CurveState memory currentState = curveState();
+        BondingCurveMath.BuyQuote memory quote = BondingCurveMath.quoteBuy(currentState, usdcAmountIn, buyFeeBps);
+        tokenAmountOut = quote.tokenAmountOut;
+
+        if (tokenAmountOut < minTokenAmountOut) {
+            revert InsufficientTokenOutput(minTokenAmountOut, tokenAmountOut);
+        }
+        if (quote.nextState.realUsdcReserve > graduationThreshold) {
+            revert GraduationThresholdExceeded(currentState.realUsdcReserve, quote.netUsdcIn, graduationThreshold);
+        }
+
+        _setCurveState(quote.nextState);
+
+        bool entersGraduationPending = quote.nextState.realUsdcReserve == graduationThreshold;
+        if (entersGraduationPending) {
+            status = PoolStatus.GraduationPending;
+        }
+
+        quoteAsset.safeTransferFrom(payer, address(this), usdcAmountIn);
+        launchToken.safeTransfer(recipient, tokenAmountOut);
+
+        emit BuyExecuted(
+            buyer,
+            recipient,
+            usdcAmountIn,
+            quote.fee,
+            quote.netUsdcIn,
+            tokenAmountOut,
+            quote.nextState.realUsdcReserve,
+            quote.nextState.realTokenReserve
+        );
+
+        if (entersGraduationPending) {
+            emit GraduationPendingEntered(quote.nextState.realUsdcReserve, graduationThreshold);
+        }
     }
 
     function _requireActiveStatus() internal view {
