@@ -95,6 +95,10 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         uint256 realTokenReserve
     );
     event GraduationPendingEntered(uint256 realUsdcReserve, uint256 graduationThreshold);
+    event PoolBuysPauseUpdated(address indexed pool, bool paused, address indexed caller);
+    event PoolTradingPauseUpdated(address indexed pool, bool paused, address indexed caller);
+    event BuysPauseUpdated(bool paused, address indexed factoryCaller);
+    event AllTradingPauseUpdated(bool paused, address indexed factoryCaller);
 
     address internal constant INITIAL_ADMIN = address(0xA11CE);
     address internal constant CREATOR = address(0xBEEF);
@@ -577,6 +581,187 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         assertTrue(LaunchPool(payable(launchPool)).isTradingActive());
         assertEq(uint256(LaunchPool(payable(launchPool)).status()), uint256(LaunchPool.PoolStatus.Active));
+    }
+
+    function test_PauserCanPauseAndUnpausePoolBuys() public {
+        vm.prank(CREATOR);
+        (, address launchPool,) = factory.createLaunch("Token", "TOK", "ipfs://meta");
+        LaunchPool pool = LaunchPool(payable(launchPool));
+
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit BuysPauseUpdated(true, address(factory));
+        vm.expectEmit(true, true, false, true, address(factory));
+        emit PoolBuysPauseUpdated(launchPool, true, INITIAL_ADMIN);
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pausePoolBuys(launchPool);
+
+        assertTrue(pool.buysPaused());
+        assertFalse(pool.allTradingPaused());
+        assertFalse(pool.canBuy());
+        assertTrue(pool.canSell());
+
+        vm.prank(INITIAL_ADMIN);
+        factory.unpausePoolBuys(launchPool);
+
+        assertFalse(pool.buysPaused());
+        assertTrue(pool.canBuy());
+        assertTrue(pool.canSell());
+    }
+
+    function test_PauserCanPauseAndUnpauseAllPoolTrading() public {
+        vm.prank(CREATOR);
+        (, address launchPool,) = factory.createLaunch("Token", "TOK", "ipfs://meta");
+        LaunchPool pool = LaunchPool(payable(launchPool));
+
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit AllTradingPauseUpdated(true, address(factory));
+        vm.expectEmit(true, true, false, true, address(factory));
+        emit PoolTradingPauseUpdated(launchPool, true, INITIAL_ADMIN);
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pausePoolTrading(launchPool);
+
+        assertFalse(pool.buysPaused());
+        assertTrue(pool.allTradingPaused());
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+
+        vm.prank(INITIAL_ADMIN);
+        factory.unpausePoolTrading(launchPool);
+
+        assertFalse(pool.allTradingPaused());
+        assertTrue(pool.canBuy());
+        assertTrue(pool.canSell());
+    }
+
+    function test_UnauthorizedCallerCannotManagePoolPauses() public {
+        vm.prank(CREATOR);
+        (, address launchPool,) = factory.createLaunch("Token", "TOK", "ipfs://meta");
+        bytes32 pauserRole = factory.PAUSER_ROLE();
+
+        vm.startPrank(OTHER_ACCOUNT);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+        );
+        factory.pausePoolBuys(launchPool);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+        );
+        factory.unpausePoolBuys(launchPool);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+        );
+        factory.pausePoolTrading(launchPool);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+        );
+        factory.unpausePoolTrading(launchPool);
+
+        vm.stopPrank();
+    }
+
+    function test_UnknownAndZeroPoolAddressesRevertForPauseManagement() public {
+        vm.prank(INITIAL_ADMIN);
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.UnknownLibrarcPool.selector, address(0)));
+        factory.pausePoolBuys(address(0));
+
+        vm.prank(INITIAL_ADMIN);
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.UnknownLibrarcPool.selector, OTHER_ACCOUNT));
+        factory.pausePoolTrading(OTHER_ACCOUNT);
+    }
+
+    function test_PausingFactoryLaunchCreationDoesNotPreventPausingAnExistingPool() public {
+        vm.prank(CREATOR);
+        (, address launchPool,) = factory.createLaunch("Token", "TOK", "ipfs://meta");
+        LaunchPool pool = LaunchPool(payable(launchPool));
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pauseLaunchCreation();
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pausePoolTrading(launchPool);
+
+        assertTrue(factory.paused());
+        assertTrue(pool.allTradingPaused());
+    }
+
+    function test_PoolPauseDoesNotPauseFactoryLaunchCreation() public {
+        vm.prank(CREATOR);
+        (, address launchPool,) = factory.createLaunch("Token", "TOK", "ipfs://meta");
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pausePoolBuys(launchPool);
+
+        assertFalse(factory.paused());
+
+        vm.prank(CREATOR);
+        (, address secondPool, uint256 secondLaunchId) = factory.createLaunch("Token Two", "TWO", "ipfs://launch/two");
+
+        assertEq(secondLaunchId, 2);
+        assertTrue(factory.isLibrarcPool(secondPool));
+    }
+
+    function test_PausingOnePoolDoesNotAffectAnotherPoolOrAccounting() public {
+        vm.startPrank(CREATOR);
+        (, address firstPoolAddress,) = factory.createLaunch("Token One", "ONE", "ipfs://launch/one");
+        (, address secondPoolAddress,) = factory.createLaunch("Token Two", "TWO", "ipfs://launch/two");
+        vm.stopPrank();
+
+        LaunchPool firstPool = LaunchPool(payable(firstPoolAddress));
+        LaunchPool secondPool = LaunchPool(payable(secondPoolAddress));
+        BondingCurveMath.CurveState memory firstStateBefore = firstPool.curveState();
+        BondingCurveMath.CurveState memory secondStateBefore = secondPool.curveState();
+        uint256 firstPoolTokenBalanceBefore = firstPool.launchToken().balanceOf(firstPoolAddress);
+        uint256 firstPoolQuoteBalanceBefore = firstPool.quoteAsset().balanceOf(firstPoolAddress);
+        uint256 secondPoolTokenBalanceBefore = secondPool.launchToken().balanceOf(secondPoolAddress);
+        uint256 secondPoolQuoteBalanceBefore = secondPool.quoteAsset().balanceOf(secondPoolAddress);
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pausePoolBuys(firstPoolAddress);
+
+        assertTrue(firstPool.buysPaused());
+        assertFalse(firstPool.allTradingPaused());
+        assertFalse(secondPool.buysPaused());
+        assertFalse(secondPool.allTradingPaused());
+        _assertCurveStateEq(firstPool.curveState(), firstStateBefore);
+        _assertCurveStateEq(secondPool.curveState(), secondStateBefore);
+        assertEq(firstPool.launchToken().balanceOf(firstPoolAddress), firstPoolTokenBalanceBefore);
+        assertEq(firstPool.quoteAsset().balanceOf(firstPoolAddress), firstPoolQuoteBalanceBefore);
+        assertEq(secondPool.launchToken().balanceOf(secondPoolAddress), secondPoolTokenBalanceBefore);
+        assertEq(secondPool.quoteAsset().balanceOf(secondPoolAddress), secondPoolQuoteBalanceBefore);
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pausePoolTrading(secondPoolAddress);
+
+        assertTrue(firstPool.buysPaused());
+        assertFalse(firstPool.allTradingPaused());
+        assertFalse(secondPool.buysPaused());
+        assertTrue(secondPool.allTradingPaused());
+        _assertCurveStateEq(firstPool.curveState(), firstStateBefore);
+        _assertCurveStateEq(secondPool.curveState(), secondStateBefore);
+    }
+
+    function test_RevertedPoolPauseOperationEmitsNoSuccessfulEvent() public {
+        vm.prank(CREATOR);
+        (, address launchPool,) = factory.createLaunch("Token", "TOK", "ipfs://meta");
+
+        vm.prank(INITIAL_ADMIN);
+        factory.pausePoolBuys(launchPool);
+
+        vm.recordLogs();
+        vm.prank(INITIAL_ADMIN);
+        (bool success, bytes memory revertData) =
+            address(factory).call(abi.encodeCall(LaunchFactory.pausePoolBuys, (launchPool)));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertFalse(success);
+        assertEq(_revertSelector(revertData), LaunchPool.PauseStateUnchanged.selector);
+        assertEq(logs.length, 0);
     }
 
     function test_CreateLaunchAndBuySucceedsForCreatorRecipient() public {
@@ -1072,6 +1257,85 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(quoteAsset.allowance(address(factory), secondPool), 0);
     }
 
+    function testFuzz_UnauthorizedCallersCannotUsePoolPauseManagement(address caller, uint8 operation) public {
+        vm.assume(caller != INITIAL_ADMIN);
+
+        vm.prank(CREATOR);
+        (, address launchPool,) = factory.createLaunch("Token", "TOK", "ipfs://meta");
+        LaunchPool pool = LaunchPool(payable(launchPool));
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 tokenBalanceBefore = pool.launchToken().balanceOf(launchPool);
+        uint256 quoteBalanceBefore = pool.quoteAsset().balanceOf(launchPool);
+        bytes32 pauserRole = factory.PAUSER_ROLE();
+
+        vm.prank(caller);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, pauserRole)
+        );
+
+        uint8 selectedOperation = operation % 4;
+        if (selectedOperation == 0) {
+            factory.pausePoolBuys(launchPool);
+        } else if (selectedOperation == 1) {
+            factory.unpausePoolBuys(launchPool);
+        } else if (selectedOperation == 2) {
+            factory.pausePoolTrading(launchPool);
+        } else {
+            factory.unpausePoolTrading(launchPool);
+        }
+
+        assertFalse(pool.buysPaused());
+        assertFalse(pool.allTradingPaused());
+        _assertCurveStateEq(pool.curveState(), stateBefore);
+        assertEq(pool.launchToken().balanceOf(launchPool), tokenBalanceBefore);
+        assertEq(pool.quoteAsset().balanceOf(launchPool), quoteBalanceBefore);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
+    }
+
+    function testFuzz_RegisteredPoolPauseSequencesMaintainIndependentState(uint8 firstSequence, uint8 secondSequence)
+        public
+    {
+        vm.startPrank(CREATOR);
+        (, address firstPoolAddress,) = factory.createLaunch("First Pool", "FST", "ipfs://launch/first-pool");
+        (, address secondPoolAddress,) = factory.createLaunch("Second Pool", "SND", "ipfs://launch/second-pool");
+        vm.stopPrank();
+
+        LaunchPool firstPool = LaunchPool(payable(firstPoolAddress));
+        LaunchPool secondPool = LaunchPool(payable(secondPoolAddress));
+        BondingCurveMath.CurveState memory firstStateBefore = firstPool.curveState();
+        BondingCurveMath.CurveState memory secondStateBefore = secondPool.curveState();
+        uint256 firstTokenBalanceBefore = firstPool.launchToken().balanceOf(firstPoolAddress);
+        uint256 firstQuoteBalanceBefore = firstPool.quoteAsset().balanceOf(firstPoolAddress);
+        uint256 secondTokenBalanceBefore = secondPool.launchToken().balanceOf(secondPoolAddress);
+        uint256 secondQuoteBalanceBefore = secondPool.quoteAsset().balanceOf(secondPoolAddress);
+
+        _applyPoolPauseSequence(factory, firstPoolAddress, firstSequence);
+        _applyPoolPauseSequence(factory, secondPoolAddress, secondSequence);
+
+        bool firstBuysPaused = (firstSequence & 0x01 != 0) && (firstSequence & 0x02 == 0);
+        bool firstTradingPaused = (firstSequence & 0x04 != 0) && (firstSequence & 0x08 == 0);
+        bool secondBuysPaused = (secondSequence & 0x01 != 0) && (secondSequence & 0x02 == 0);
+        bool secondTradingPaused = (secondSequence & 0x04 != 0) && (secondSequence & 0x08 == 0);
+
+        assertEq(firstPool.buysPaused(), firstBuysPaused);
+        assertEq(firstPool.allTradingPaused(), firstTradingPaused);
+        assertEq(firstPool.canBuy(), !firstBuysPaused && !firstTradingPaused);
+        assertEq(firstPool.canSell(), !firstTradingPaused);
+        assertEq(secondPool.buysPaused(), secondBuysPaused);
+        assertEq(secondPool.allTradingPaused(), secondTradingPaused);
+        assertEq(secondPool.canBuy(), !secondBuysPaused && !secondTradingPaused);
+        assertEq(secondPool.canSell(), !secondTradingPaused);
+
+        _assertCurveStateEq(firstPool.curveState(), firstStateBefore);
+        _assertCurveStateEq(secondPool.curveState(), secondStateBefore);
+        assertEq(firstPool.launchToken().balanceOf(firstPoolAddress), firstTokenBalanceBefore);
+        assertEq(firstPool.quoteAsset().balanceOf(firstPoolAddress), firstQuoteBalanceBefore);
+        assertEq(secondPool.launchToken().balanceOf(secondPoolAddress), secondTokenBalanceBefore);
+        assertEq(secondPool.quoteAsset().balanceOf(secondPoolAddress), secondQuoteBalanceBefore);
+        assertEq(uint256(firstPool.status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(uint256(secondPool.status()), uint256(LaunchPool.PoolStatus.Active));
+    }
+
     function _deployDefaultFactory() internal returns (LaunchFactory) {
         return _deployFactory(
             INITIAL_ADMIN,
@@ -1153,6 +1417,25 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assembly ("memory-safe") {
             selector := mload(add(revertData, 0x20))
         }
+    }
+
+    function _applyPoolPauseSequence(LaunchFactory targetFactory, address poolAddress, uint8 sequence) internal {
+        vm.startPrank(INITIAL_ADMIN);
+
+        if (sequence & 0x01 != 0) {
+            targetFactory.pausePoolBuys(poolAddress);
+        }
+        if (sequence & 0x02 != 0 && LaunchPool(payable(poolAddress)).buysPaused()) {
+            targetFactory.unpausePoolBuys(poolAddress);
+        }
+        if (sequence & 0x04 != 0) {
+            targetFactory.pausePoolTrading(poolAddress);
+        }
+        if (sequence & 0x08 != 0 && LaunchPool(payable(poolAddress)).allTradingPaused()) {
+            targetFactory.unpausePoolTrading(poolAddress);
+        }
+
+        vm.stopPrank();
     }
 
     function _expectedInitialBuyQuote(LaunchFactory targetFactory, uint256 usdcAmountIn)

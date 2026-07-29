@@ -55,6 +55,7 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
     error UnexpectedQuoteAssetBalanceIncrease(uint256 balanceBefore, uint256 balanceAfter, uint256 expectedIncrease);
     error FactoryQuoteAssetBalanceMismatch(uint256 expectedBalance, uint256 actualBalance);
     error FactoryAllowanceNotCleared(uint256 remainingAllowance);
+    error UnknownLibrarcPool(address pool);
     error NativeAssetNotAccepted();
 
     /// @notice Role allowed to pause and unpause new launch creation.
@@ -95,6 +96,18 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         uint256 usdcAmountIn,
         uint256 tokenAmountOut
     );
+
+    /// @notice Emitted after this factory updates the buy-pause state for a registered pool.
+    /// @param pool The registered LaunchPool that was updated.
+    /// @param paused The new buy-pause state.
+    /// @param caller The PAUSER_ROLE holder that triggered the factory relay.
+    event PoolBuysPauseUpdated(address indexed pool, bool paused, address indexed caller);
+
+    /// @notice Emitted after this factory updates the all-trading-pause state for a registered pool.
+    /// @param pool The registered LaunchPool that was updated.
+    /// @param paused The new all-trading-pause state.
+    /// @param caller The PAUSER_ROLE holder that triggered the factory relay.
+    event PoolTradingPauseUpdated(address indexed pool, bool paused, address indexed caller);
 
     /// @notice The protocol quote-asset address configured for every new pool.
     address public immutable quoteAsset;
@@ -287,6 +300,30 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         _unpause();
     }
 
+    /// @notice Pauses buy execution for a registered pool without affecting sell execution.
+    /// @param pool_ The registered LaunchPool to update.
+    function pausePoolBuys(address pool_) external onlyRole(PAUSER_ROLE) {
+        _setPoolBuysPaused(pool_, true);
+    }
+
+    /// @notice Unpauses buy execution for a registered pool.
+    /// @param pool_ The registered LaunchPool to update.
+    function unpausePoolBuys(address pool_) external onlyRole(PAUSER_ROLE) {
+        _setPoolBuysPaused(pool_, false);
+    }
+
+    /// @notice Pauses all trade execution for a registered pool.
+    /// @param pool_ The registered LaunchPool to update.
+    function pausePoolTrading(address pool_) external onlyRole(PAUSER_ROLE) {
+        _setPoolTradingPaused(pool_, true);
+    }
+
+    /// @notice Unpauses all trade execution for a registered pool.
+    /// @param pool_ The registered LaunchPool to update.
+    function unpausePoolTrading(address pool_) external onlyRole(PAUSER_ROLE) {
+        _setPoolTradingPaused(pool_, false);
+    }
+
     receive() external payable {
         revert NativeAssetNotAccepted();
     }
@@ -380,5 +417,21 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
     function _validateAdminTransferDelay(uint48 adminTransferDelay_) private pure returns (uint48) {
         if (adminTransferDelay_ == 0) revert ZeroAdminTransferDelay();
         return adminTransferDelay_;
+    }
+
+    function _setPoolBuysPaused(address pool_, bool paused_) internal {
+        if (!isLibrarcPool[pool_]) revert UnknownLibrarcPool(pool_);
+
+        LaunchPool(payable(pool_)).setBuysPaused(paused_);
+
+        emit PoolBuysPauseUpdated(pool_, paused_, msg.sender);
+    }
+
+    function _setPoolTradingPaused(address pool_, bool paused_) internal {
+        if (!isLibrarcPool[pool_]) revert UnknownLibrarcPool(pool_);
+
+        LaunchPool(payable(pool_)).setAllTradingPaused(paused_);
+
+        emit PoolTradingPauseUpdated(pool_, paused_, msg.sender);
     }
 }

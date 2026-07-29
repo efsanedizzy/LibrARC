@@ -61,6 +61,10 @@ contract LaunchPool is ReentrancyGuard {
         uint256 expectedFeeVaultQuoteAssetBalance,
         uint256 actualFeeVaultQuoteAssetBalance
     );
+    error BuysPaused();
+    error AllTradingPaused();
+    error PauseStateUnchanged();
+    error PauseChangeNotAllowed();
     error ZeroRecipient();
     error ExpiredDeadline(uint256 currentTimestamp, uint256 deadline);
     error InsufficientTokenOutput(uint256 minimumTokenAmountOut, uint256 actualTokenAmountOut);
@@ -145,6 +149,16 @@ contract LaunchPool is ReentrancyGuard {
     /// @param amount The exact protocol-fee amount transferred.
     event ProtocolFeesSwept(address indexed caller, address indexed feeVault, uint256 amount);
 
+    /// @notice Emitted when the factory changes the buy-pause flag for an active pool.
+    /// @param paused The new stored buy-pause state.
+    /// @param factoryCaller The immutable factory caller that applied the change.
+    event BuysPauseUpdated(bool paused, address indexed factoryCaller);
+
+    /// @notice Emitted when the factory changes the all-trading-pause flag for an active pool.
+    /// @param paused The new stored all-trading-pause state.
+    /// @param factoryCaller The immutable factory caller that applied the change.
+    event AllTradingPauseUpdated(bool paused, address indexed factoryCaller);
+
     /// @notice The factory allowed to perform one-time initialization.
     address public immutable factory;
 
@@ -183,6 +197,12 @@ contract LaunchPool is ReentrancyGuard {
 
     /// @notice The current pool lifecycle status.
     PoolStatus public status;
+
+    /// @notice True when buy execution is paused for the active pool.
+    bool public buysPaused;
+
+    /// @notice True when all trade execution is paused for the active pool.
+    bool public allTradingPaused;
 
     uint256 internal _realUsdcReserve;
     uint256 internal _realTokenReserve;
@@ -408,6 +428,32 @@ contract LaunchPool is ReentrancyGuard {
         emit ProtocolFeesSwept(msg.sender, feeVault, amountSwept);
     }
 
+    /// @notice Sets whether public and factory-mediated buys are paused for this active pool.
+    /// @dev Only the immutable factory may call this function.
+    /// @param paused_ The new buy-pause state.
+    function setBuysPaused(bool paused_) external {
+        if (msg.sender != factory) revert UnauthorizedFactory(msg.sender, factory);
+        if (status != PoolStatus.Active) revert PauseChangeNotAllowed();
+        if (buysPaused == paused_) revert PauseStateUnchanged();
+
+        buysPaused = paused_;
+
+        emit BuysPauseUpdated(paused_, msg.sender);
+    }
+
+    /// @notice Sets whether all trade execution is paused for this active pool.
+    /// @dev Only the immutable factory may call this function.
+    /// @param paused_ The new all-trading-pause state.
+    function setAllTradingPaused(bool paused_) external {
+        if (msg.sender != factory) revert UnauthorizedFactory(msg.sender, factory);
+        if (status != PoolStatus.Active) revert PauseChangeNotAllowed();
+        if (allTradingPaused == paused_) revert PauseStateUnchanged();
+
+        allTradingPaused = paused_;
+
+        emit AllTradingPauseUpdated(paused_, msg.sender);
+    }
+
     /// @notice Executes a buy against the current internal bonding-curve state.
     /// @param usdcAmountIn The gross quote-asset input amount in 6-decimal units.
     /// @param minTokenAmountOut The minimum acceptable launch-token output amount.
@@ -456,6 +502,7 @@ contract LaunchPool is ReentrancyGuard {
         returns (uint256 netUsdcAmountOut)
     {
         _requireActiveStatus();
+        _requireSellExecutionAllowed();
         if (recipient == address(0)) revert ZeroRecipient();
         if (block.timestamp > deadline) revert ExpiredDeadline(block.timestamp, deadline);
         if (tokenAmountIn == 0) revert BondingCurveMath.ZeroInput();
@@ -539,6 +586,18 @@ contract LaunchPool is ReentrancyGuard {
         active = status == PoolStatus.Active;
     }
 
+    /// @notice Returns whether buys are currently executable.
+    /// @return buyable True only when the pool is active, buys are not paused, and all trading is not paused.
+    function canBuy() external view returns (bool buyable) {
+        buyable = status == PoolStatus.Active && !buysPaused && !allTradingPaused;
+    }
+
+    /// @notice Returns whether sells are currently executable.
+    /// @return sellable True only when the pool is active and all trading is not paused.
+    function canSell() external view returns (bool sellable) {
+        sellable = status == PoolStatus.Active && !allTradingPaused;
+    }
+
     function _executeBuy(
         address payer,
         address buyer,
@@ -548,6 +607,7 @@ contract LaunchPool is ReentrancyGuard {
         uint256 deadline
     ) internal returns (uint256 tokenAmountOut) {
         _requireActiveStatus();
+        _requireBuyExecutionAllowed();
         if (recipient == address(0)) revert ZeroRecipient();
         if (block.timestamp > deadline) revert ExpiredDeadline(block.timestamp, deadline);
         if (usdcAmountIn == 0) revert BondingCurveMath.ZeroInput();
@@ -591,6 +651,15 @@ contract LaunchPool is ReentrancyGuard {
 
     function _requireActiveStatus() internal view {
         if (status != PoolStatus.Active) revert PoolNotActive(status);
+    }
+
+    function _requireBuyExecutionAllowed() internal view {
+        if (allTradingPaused) revert AllTradingPaused();
+        if (buysPaused) revert BuysPaused();
+    }
+
+    function _requireSellExecutionAllowed() internal view {
+        if (allTradingPaused) revert AllTradingPaused();
     }
 
     function _setCurveState(BondingCurveMath.CurveState memory nextState) internal {

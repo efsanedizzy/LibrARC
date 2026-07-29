@@ -278,6 +278,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 accruedProtocolFeesRemaining
     );
     event ProtocolFeesSwept(address indexed caller, address indexed feeVault, uint256 amount);
+    event BuysPauseUpdated(bool paused, address indexed factoryCaller);
+    event AllTradingPauseUpdated(bool paused, address indexed factoryCaller);
 
     address internal constant ALICE = address(0xA11CE);
     address internal constant BOB = address(0xB0B);
@@ -1034,6 +1036,377 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         assertTrue(pool.isTradingActive());
+    }
+
+    function test_InitializeStartsWithPauseFlagsDisabledAndExecutionViewsEnabled() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        assertFalse(pool.buysPaused());
+        assertFalse(pool.allTradingPaused());
+        assertTrue(pool.canBuy());
+        assertTrue(pool.canSell());
+    }
+
+    function test_CanBuyAndCanSellReflectPauseFlagsAndPoolStatus() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        assertTrue(pool.canBuy());
+        assertTrue(pool.canSell());
+
+        pool.setBuysPaused(true);
+        assertFalse(pool.canBuy());
+        assertTrue(pool.canSell());
+
+        pool.setAllTradingPaused(true);
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+
+        pool.setAllTradingPaused(false);
+        assertFalse(pool.canBuy());
+        assertTrue(pool.canSell());
+
+        pool.setBuysPaused(false);
+        assertTrue(pool.canBuy());
+        assertTrue(pool.canSell());
+
+        BondingCurveMath.CurveState memory state = pool.curveState();
+        pool.exposedSetAccountedState(
+            state.realUsdcReserve,
+            state.realTokenReserve,
+            state.accruedProtocolFees,
+            LaunchPool.PoolStatus.Uninitialized
+        );
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+
+        pool.exposedSetAccountedState(
+            state.realUsdcReserve,
+            state.realTokenReserve,
+            state.accruedProtocolFees,
+            LaunchPool.PoolStatus.GraduationPending
+        );
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+
+        pool.exposedSetAccountedState(
+            state.realUsdcReserve, state.realTokenReserve, state.accruedProtocolFees, LaunchPool.PoolStatus.Graduated
+        );
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+    }
+
+    function test_FactoryCanSetBuysPausedAndEmitEvent() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit BuysPauseUpdated(true, address(this));
+        pool.setBuysPaused(true);
+
+        assertTrue(pool.buysPaused());
+        assertFalse(pool.allTradingPaused());
+        assertFalse(pool.canBuy());
+        assertTrue(pool.canSell());
+
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit BuysPauseUpdated(false, address(this));
+        pool.setBuysPaused(false);
+
+        assertFalse(pool.buysPaused());
+        assertTrue(pool.canBuy());
+        assertTrue(pool.canSell());
+    }
+
+    function test_FactoryCanSetAllTradingPausedAndEmitEvent() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit AllTradingPauseUpdated(true, address(this));
+        pool.setAllTradingPaused(true);
+
+        assertFalse(pool.buysPaused());
+        assertTrue(pool.allTradingPaused());
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+
+        vm.expectEmit(true, false, false, true, address(pool));
+        emit AllTradingPauseUpdated(false, address(this));
+        pool.setAllTradingPaused(false);
+
+        assertFalse(pool.allTradingPaused());
+        assertTrue(pool.canBuy());
+        assertTrue(pool.canSell());
+    }
+
+    function test_CreatorCannotDirectlyChangePauseFlags() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.prank(ALICE);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, ALICE, address(this)));
+        pool.setBuysPaused(true);
+    }
+
+    function test_TraderCannotDirectlyChangePauseFlags() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.prank(BOB);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, BOB, address(this)));
+        pool.setAllTradingPaused(true);
+    }
+
+    function test_SettingAnUnchangedPauseValueReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        pool.setBuysPaused(true);
+
+        vm.expectRevert(LaunchPool.PauseStateUnchanged.selector);
+        pool.setBuysPaused(true);
+
+        pool.setAllTradingPaused(true);
+
+        vm.expectRevert(LaunchPool.PauseStateUnchanged.selector);
+        pool.setAllTradingPaused(true);
+    }
+
+    function test_BuysPausedBlocksBuysOnlyAndDoesNotMutateQuotesOrAccounting() public {
+        uint256 initialBuyAmount = 100_000;
+        uint256 nextBuyAmount = 40_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
+        uint256 purchasedTokens =
+            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+
+        uint256 sellAmountIn = purchasedTokens / 3;
+        (BondingCurveMath.BuyQuote memory buyQuoteBeforePause, bool reachesThresholdBeforePause) =
+            pool.quoteBuy(nextBuyAmount);
+        BondingCurveMath.SellQuote memory sellQuoteBeforePause = pool.quoteSell(sellAmountIn);
+        BondingCurveMath.CurveState memory stateBeforePause = pool.curveState();
+        uint256 launchTokenBalanceBeforePause = token.balanceOf(address(pool));
+        uint256 quoteAssetBalanceBeforePause = quoteAsset.balanceOf(address(pool));
+
+        pool.setBuysPaused(true);
+
+        _assertPoolStateAndBalancesUnchanged(
+            pool,
+            stateBeforePause,
+            launchTokenBalanceBeforePause,
+            quoteAssetBalanceBeforePause,
+            LaunchPool.PoolStatus.Active
+        );
+        assertTrue(pool.buysPaused());
+        assertFalse(pool.allTradingPaused());
+
+        (BondingCurveMath.BuyQuote memory buyQuoteAfterPause, bool reachesThresholdAfterPause) =
+            pool.quoteBuy(nextBuyAmount);
+        BondingCurveMath.SellQuote memory sellQuoteAfterPause = pool.quoteSell(sellAmountIn);
+        _assertBuyQuoteEq(buyQuoteBeforePause, buyQuoteAfterPause);
+        _assertSellQuoteEq(sellQuoteBeforePause, sellQuoteAfterPause);
+        assertEq(reachesThresholdAfterPause, reachesThresholdBeforePause);
+
+        _mintAndApproveQuoteAsset(BOB, nextBuyAmount, pool);
+        vm.prank(BOB);
+        vm.expectRevert(LaunchPool.BuysPaused.selector);
+        pool.buy(nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, BOB);
+
+        quoteAsset.mint(address(this), nextBuyAmount);
+        quoteAsset.approve(address(pool), nextBuyAmount);
+        vm.expectRevert(LaunchPool.BuysPaused.selector);
+        pool.buyForFactory(CAROL, nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, CAROL);
+
+        _assertPoolStateAndBalancesUnchanged(
+            pool,
+            stateBeforePause,
+            launchTokenBalanceBeforePause,
+            quoteAssetBalanceBeforePause,
+            LaunchPool.PoolStatus.Active
+        );
+
+        vm.prank(ALICE);
+        token.approve(address(pool), sellAmountIn);
+
+        vm.prank(ALICE);
+        uint256 usdcAmountOut = pool.sell(sellAmountIn, sellQuoteBeforePause.netUsdcAmountOut, block.timestamp, ALICE);
+        assertEq(usdcAmountOut, sellQuoteBeforePause.netUsdcAmountOut);
+
+        pool.setBuysPaused(false);
+
+        (BondingCurveMath.BuyQuote memory buyQuoteAfterUnpause,) = pool.quoteBuy(nextBuyAmount);
+        uint256 tokenAmountOut =
+            _buyFromPool(pool, BOB, nextBuyAmount, buyQuoteAfterUnpause.tokenAmountOut, block.timestamp, BOB);
+        assertEq(tokenAmountOut, buyQuoteAfterUnpause.tokenAmountOut);
+    }
+
+    function test_AllTradingPausedBlocksTradeExecutionButLeavesQuotesAndAccountingAvailable() public {
+        uint256 initialBuyAmount = 100_000;
+        uint256 nextBuyAmount = 45_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
+        uint256 purchasedTokens =
+            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+
+        uint256 sellAmountIn = purchasedTokens / 4;
+        (BondingCurveMath.BuyQuote memory buyQuoteBeforePause, bool reachesThresholdBeforePause) =
+            pool.quoteBuy(nextBuyAmount);
+        BondingCurveMath.SellQuote memory sellQuoteBeforePause = pool.quoteSell(sellAmountIn);
+        BondingCurveMath.CurveState memory stateBeforePause = pool.curveState();
+        uint256 launchTokenBalanceBeforePause = token.balanceOf(address(pool));
+        uint256 quoteAssetBalanceBeforePause = quoteAsset.balanceOf(address(pool));
+
+        pool.setAllTradingPaused(true);
+
+        _assertPoolStateAndBalancesUnchanged(
+            pool,
+            stateBeforePause,
+            launchTokenBalanceBeforePause,
+            quoteAssetBalanceBeforePause,
+            LaunchPool.PoolStatus.Active
+        );
+        assertFalse(pool.buysPaused());
+        assertTrue(pool.allTradingPaused());
+
+        (BondingCurveMath.BuyQuote memory buyQuoteAfterPause, bool reachesThresholdAfterPause) =
+            pool.quoteBuy(nextBuyAmount);
+        BondingCurveMath.SellQuote memory sellQuoteAfterPause = pool.quoteSell(sellAmountIn);
+        _assertBuyQuoteEq(buyQuoteBeforePause, buyQuoteAfterPause);
+        _assertSellQuoteEq(sellQuoteBeforePause, sellQuoteAfterPause);
+        assertEq(reachesThresholdAfterPause, reachesThresholdBeforePause);
+
+        _mintAndApproveQuoteAsset(BOB, nextBuyAmount, pool);
+        vm.prank(BOB);
+        vm.expectRevert(LaunchPool.AllTradingPaused.selector);
+        pool.buy(nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, BOB);
+
+        quoteAsset.mint(address(this), nextBuyAmount);
+        quoteAsset.approve(address(pool), nextBuyAmount);
+        vm.expectRevert(LaunchPool.AllTradingPaused.selector);
+        pool.buyForFactory(CAROL, nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, CAROL);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), sellAmountIn);
+
+        vm.prank(ALICE);
+        vm.expectRevert(LaunchPool.AllTradingPaused.selector);
+        pool.sell(sellAmountIn, sellQuoteBeforePause.netUsdcAmountOut, block.timestamp, ALICE);
+
+        _assertPoolStateAndBalancesUnchanged(
+            pool,
+            stateBeforePause,
+            launchTokenBalanceBeforePause,
+            quoteAssetBalanceBeforePause,
+            LaunchPool.PoolStatus.Active
+        );
+
+        pool.setAllTradingPaused(false);
+
+        vm.prank(ALICE);
+        uint256 usdcAmountOut = pool.sell(sellAmountIn, sellQuoteBeforePause.netUsdcAmountOut, block.timestamp, ALICE);
+        assertEq(usdcAmountOut, sellQuoteBeforePause.netUsdcAmountOut);
+    }
+
+    function test_UnpausingAllTradingPreservesExistingBuysPause() public {
+        uint256 initialBuyAmount = 80_000;
+        uint256 nextBuyAmount = 25_000;
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
+        uint256 purchasedTokens =
+            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+        uint256 sellAmountIn = purchasedTokens / 5;
+
+        pool.setBuysPaused(true);
+        pool.setAllTradingPaused(true);
+
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+
+        pool.setAllTradingPaused(false);
+
+        assertTrue(pool.buysPaused());
+        assertFalse(pool.allTradingPaused());
+        assertFalse(pool.canBuy());
+        assertTrue(pool.canSell());
+
+        (BondingCurveMath.BuyQuote memory buyQuote,) = pool.quoteBuy(nextBuyAmount);
+        _mintAndApproveQuoteAsset(BOB, nextBuyAmount, pool);
+        vm.prank(BOB);
+        vm.expectRevert(LaunchPool.BuysPaused.selector);
+        pool.buy(nextBuyAmount, buyQuote.tokenAmountOut, block.timestamp, BOB);
+
+        BondingCurveMath.SellQuote memory sellQuote = pool.quoteSell(sellAmountIn);
+
+        vm.prank(ALICE);
+        token.approve(address(pool), sellAmountIn);
+
+        vm.prank(ALICE);
+        uint256 usdcAmountOut = pool.sell(sellAmountIn, sellQuote.netUsdcAmountOut, block.timestamp, ALICE);
+        assertEq(usdcAmountOut, sellQuote.netUsdcAmountOut);
+    }
+
+    function test_PauseChangesAreRejectedWhenPoolIsNotActive() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+
+        vm.expectRevert(LaunchPool.PauseChangeNotAllowed.selector);
+        pool.setBuysPaused(true);
+
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        pool.exposedSetAccountedState(123, token.FIXED_SUPPLY() - 1 ether, 0, LaunchPool.PoolStatus.GraduationPending);
+        vm.expectRevert(LaunchPool.PauseChangeNotAllowed.selector);
+        pool.setBuysPaused(true);
+
+        pool.exposedSetAccountedState(0, 0, 0, LaunchPool.PoolStatus.Graduated);
+        vm.expectRevert(LaunchPool.PauseChangeNotAllowed.selector);
+        pool.setAllTradingPaused(true);
+
+        assertFalse(pool.canBuy());
+        assertFalse(pool.canSell());
+    }
+
+    function test_SweepProtocolFeesRemainsUsableWhileActivePoolIsPaused() public {
+        uint256 realUsdcReserve = 12_000;
+        uint256 realTokenReserve = tokenSupply() - 3 ether;
+        uint256 accruedProtocolFees = 456;
+        (LaunchPoolHarness pool,) = _prepareSweepFixture(
+            realUsdcReserve, realTokenReserve, accruedProtocolFees, 0, 12, LaunchPool.PoolStatus.Active
+        );
+
+        pool.setBuysPaused(true);
+        pool.setAllTradingPaused(true);
+
+        vm.prank(OTHER_ACCOUNT);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        assertEq(amountSwept, accruedProtocolFees);
+        assertTrue(pool.buysPaused());
+        assertTrue(pool.allTradingPaused());
+        assertEq(pool.curveState().accruedProtocolFees, 0);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
     }
 
     function test_DirectNativeTransferReverts() public {
@@ -2437,6 +2810,113 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
     }
 
+    function testFuzz_UnauthorizedPauseCallersCannotMutateState(address caller, bool updatesBuyPause) public {
+        vm.assume(caller != address(this));
+
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 launchTokenBalanceBefore = token.balanceOf(address(pool));
+        uint256 quoteAssetBalanceBefore = quoteAsset.balanceOf(address(pool));
+
+        vm.prank(caller);
+        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, caller, address(this)));
+        if (updatesBuyPause) {
+            pool.setBuysPaused(true);
+        } else {
+            pool.setAllTradingPaused(true);
+        }
+
+        _assertPoolStateAndBalancesUnchanged(
+            pool, stateBefore, launchTokenBalanceBefore, quoteAssetBalanceBefore, LaunchPool.PoolStatus.Active
+        );
+        assertFalse(pool.buysPaused());
+        assertFalse(pool.allTradingPaused());
+    }
+
+    function testFuzz_PauseTransitionsNeverMutateStateOrQuoteOutputs(
+        uint256 initialBuyAmount,
+        uint256 nextBuyAmount,
+        uint256 sellAmountIn,
+        bool applyBuyPause,
+        bool applyAllTradingPause
+    ) public {
+        initialBuyAmount = bound(initialBuyAmount, 10_000, 250_000);
+
+        if (!applyBuyPause && !applyAllTradingPause) {
+            applyBuyPause = true;
+        }
+
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
+        uint256 purchasedTokens =
+            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+
+        nextBuyAmount = bound(nextBuyAmount, 1, 100_000);
+
+        uint256 minimumSellAmount = purchasedTokens / 1000;
+        if (minimumSellAmount == 0) {
+            minimumSellAmount = 1;
+        }
+        sellAmountIn = bound(sellAmountIn, minimumSellAmount, purchasedTokens);
+
+        (BondingCurveMath.BuyQuote memory buyQuoteBefore, bool reachesThresholdBefore) = pool.quoteBuy(nextBuyAmount);
+        BondingCurveMath.SellQuote memory sellQuoteBefore = pool.quoteSell(sellAmountIn);
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 launchTokenBalanceBefore = token.balanceOf(address(pool));
+        uint256 quoteAssetBalanceBefore = quoteAsset.balanceOf(address(pool));
+
+        if (applyBuyPause) {
+            pool.setBuysPaused(true);
+        }
+        if (applyAllTradingPause) {
+            pool.setAllTradingPaused(true);
+        }
+
+        (BondingCurveMath.BuyQuote memory buyQuoteAfter, bool reachesThresholdAfter) = pool.quoteBuy(nextBuyAmount);
+        BondingCurveMath.SellQuote memory sellQuoteAfter = pool.quoteSell(sellAmountIn);
+
+        _assertPoolStateAndBalancesUnchanged(
+            pool, stateBefore, launchTokenBalanceBefore, quoteAssetBalanceBefore, LaunchPool.PoolStatus.Active
+        );
+        _assertBuyQuoteEq(buyQuoteBefore, buyQuoteAfter);
+        _assertSellQuoteEq(sellQuoteBefore, sellQuoteAfter);
+        assertEq(reachesThresholdAfter, reachesThresholdBefore);
+        assertEq(pool.canBuy(), !applyBuyPause && !applyAllTradingPause);
+        assertEq(pool.canSell(), !applyAllTradingPause);
+    }
+
+    function testFuzz_CanBuyAndCanSellMatchDocumentedSemantics(
+        bool buysPaused_,
+        bool allTradingPaused_,
+        uint8 statusIndex
+    ) public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        if (buysPaused_) {
+            pool.setBuysPaused(true);
+        }
+        if (allTradingPaused_) {
+            pool.setAllTradingPaused(true);
+        }
+
+        LaunchPool.PoolStatus expectedStatus = LaunchPool.PoolStatus(statusIndex % 4);
+        BondingCurveMath.CurveState memory state = pool.curveState();
+        pool.exposedSetAccountedState(
+            state.realUsdcReserve, state.realTokenReserve, state.accruedProtocolFees, expectedStatus
+        );
+
+        assertEq(pool.canBuy(), expectedStatus == LaunchPool.PoolStatus.Active && !buysPaused_ && !allTradingPaused_);
+        assertEq(pool.canSell(), expectedStatus == LaunchPool.PoolStatus.Active && !allTradingPaused_);
+    }
+
     function testFuzz_SweepProtocolFeesTransfersEntireAccruedAmount(
         address caller,
         uint256 realUsdcReserve,
@@ -3207,6 +3687,19 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(left.grossUsdcAmountOut, right.grossUsdcAmountOut);
         assertEq(left.netUsdcAmountOut, right.netUsdcAmountOut);
         _assertCurveStateEq(left.nextState, right.nextState);
+    }
+
+    function _assertPoolStateAndBalancesUnchanged(
+        LaunchPoolHarness pool,
+        BondingCurveMath.CurveState memory expectedState,
+        uint256 expectedLaunchTokenBalance,
+        uint256 expectedQuoteAssetBalance,
+        LaunchPool.PoolStatus expectedStatus
+    ) internal view {
+        _assertCurveStateEq(pool.curveState(), expectedState);
+        assertEq(pool.launchToken().balanceOf(address(pool)), expectedLaunchTokenBalance);
+        assertEq(pool.quoteAsset().balanceOf(address(pool)), expectedQuoteAssetBalance);
+        assertEq(uint256(pool.status()), uint256(expectedStatus));
     }
 
     function _assertPoolSolvency(LaunchPoolHarness pool) internal view {
