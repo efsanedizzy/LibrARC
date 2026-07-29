@@ -37,12 +37,52 @@ jobs:
   contracts:
     name: Foundry
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: contracts
     steps:
-      - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
-      - run: forge fmt --check
-      - run: forge build
-      - run: forge test
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+
+      - name: Print Foundry version
+        run: forge --version
+
+      - name: Install pinned Foundry dependencies
+        run: |
+          rm -rf lib/openzeppelin-contracts
+          rm -rf lib/forge-std
+          forge install OpenZeppelin/openzeppelin-contracts@v5.6.1 --no-git
+          forge install foundry-rs/forge-std@v1.16.1 --no-git
+
+      - name: Verify Foundry dependencies
+        run: |
+          required_files=(
+            "lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol"
+            "lib/forge-std/src/Test.sol"
+            "lib/forge-std/src/StdInvariant.sol"
+          )
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Missing required Foundry dependency file: $file" >&2
+              exit 1
+            fi
+          done
+
+      - name: Check Foundry formatting
+        run: forge fmt --check
+
+      - name: Build Foundry contracts
+        run: forge build --sizes
+
+      - name: Run complete Foundry suite
+        run: forge test -vvv
