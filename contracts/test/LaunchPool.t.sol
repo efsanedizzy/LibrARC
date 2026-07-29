@@ -27,6 +27,40 @@ contract MockQuoteAsset is ERC20 {
     }
 }
 
+contract FeeOnTransferQuoteAsset is ERC20 {
+    address internal constant FEE_RECIPIENT = address(0xFEE);
+
+    uint256 private immutable _feeBps;
+
+    constructor(uint256 feeBps_) ERC20("Arc USDC", "USDC") {
+        _feeBps = feeBps_;
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        if (from == address(0) || to == address(0) || value == 0 || _feeBps == 0) {
+            super._update(from, to, value);
+            return;
+        }
+
+        uint256 fee = (value * _feeBps) / 10_000;
+        uint256 netAmount = value - fee;
+
+        super._update(from, to, netAmount);
+
+        if (fee > 0) {
+            super._update(from, FEE_RECIPIENT, fee);
+        }
+    }
+}
+
 contract MockConfigurableToken is ERC20 {
     uint8 private immutable _tokenDecimals;
     bool private _failTransfer;
@@ -243,6 +277,7 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 quoteAssetAmount,
         uint256 accruedProtocolFeesRemaining
     );
+    event ProtocolFeesSwept(address indexed caller, address indexed feeVault, uint256 amount);
 
     address internal constant ALICE = address(0xA11CE);
     address internal constant BOB = address(0xB0B);
@@ -2072,6 +2107,413 @@ contract LaunchPoolTest is Test, IERC20Errors {
         _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
     }
 
+    function test_SweepProtocolFeesBeforeInitializationReverts() public {
+        (LaunchPoolHarness pool,) = _deployDefaultPool();
+
+        vm.expectRevert(LaunchPool.PoolNotInitialized.selector);
+        pool.sweepProtocolFees();
+    }
+
+    function test_SweepProtocolFeesWithZeroAccruedFeesReverts() public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.expectRevert(LaunchPool.NoProtocolFees.selector);
+        pool.sweepProtocolFees();
+    }
+
+    function test_SweepProtocolFeesInsufficientQuoteAssetCoverageReverts() public {
+        uint256 realUsdcReserve = 1000;
+        uint256 accruedProtocolFees = 50;
+        (LaunchPoolHarness pool,) = _prepareSweepFixture(
+            realUsdcReserve, tokenSupply() - 1 ether, accruedProtocolFees, 0, 0, LaunchPool.PoolStatus.Active
+        );
+
+        vm.prank(address(pool));
+        assertTrue(quoteAsset.transfer(ALICE, 1));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientQuoteAssetBalance.selector,
+                realUsdcReserve + accruedProtocolFees - 1,
+                realUsdcReserve + accruedProtocolFees
+            )
+        );
+        pool.sweepProtocolFees();
+    }
+
+    function test_SweepProtocolFeesSucceedsPermissionlesslyWhileActive() public {
+        uint256 realUsdcReserve = 12_345;
+        uint256 realTokenReserve = tokenSupply() - 5 ether;
+        uint256 accruedProtocolFees = 678;
+        uint256 launchTokenDonation = 2 ether;
+        uint256 quoteAssetDonation = 90;
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareSweepFixture(
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            launchTokenDonation,
+            quoteAssetDonation,
+            LaunchPool.PoolStatus.Active
+        );
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
+        uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
+        uint256 poolTokenBefore = token.balanceOf(address(pool));
+        uint256 feeVaultQuoteBefore = quoteAsset.balanceOf(address(feeVault));
+        uint256 callerQuoteBefore = quoteAsset.balanceOf(OTHER_ACCOUNT);
+
+        vm.expectEmit(true, true, false, true, address(pool));
+        emit ProtocolFeesSwept(OTHER_ACCOUNT, address(feeVault), accruedProtocolFees);
+
+        vm.prank(OTHER_ACCOUNT);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        BondingCurveMath.CurveState memory stateAfter = pool.curveState();
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(stateAfter.realUsdcReserve, stateBefore.realUsdcReserve);
+        assertEq(stateAfter.realTokenReserve, stateBefore.realTokenReserve);
+        assertEq(stateAfter.virtualUsdcReserve, stateBefore.virtualUsdcReserve);
+        assertEq(stateAfter.virtualTokenReserve, stateBefore.virtualTokenReserve);
+        assertEq(stateAfter.accruedProtocolFees, 0);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
+        assertEq(poolQuoteBefore - quoteAsset.balanceOf(address(pool)), accruedProtocolFees);
+        assertEq(quoteAsset.balanceOf(address(pool)), realUsdcReserve + quoteAssetDonation);
+        assertEq(poolTokenBefore, token.balanceOf(address(pool)));
+        assertEq(quoteAsset.balanceOf(address(feeVault)), feeVaultQuoteBefore + accruedProtocolFees);
+        assertEq(quoteAsset.balanceOf(OTHER_ACCOUNT), callerQuoteBefore);
+        _assertPoolSolvency(pool);
+
+        vm.expectRevert(LaunchPool.NoProtocolFees.selector);
+        pool.sweepProtocolFees();
+    }
+
+    function test_SweepProtocolFeesSucceedsPermissionlesslyWhileGraduationPending() public {
+        uint256 accruedProtocolFees = 77;
+        uint256 quoteAssetDonation = 33;
+        (LaunchPoolHarness pool,) = _prepareSweepFixture(
+            DEFAULT_GRADUATION_THRESHOLD,
+            tokenSupply() - 2 ether,
+            accruedProtocolFees,
+            1 ether,
+            quoteAssetDonation,
+            LaunchPool.PoolStatus.GraduationPending
+        );
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
+
+        vm.prank(CAROL);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        BondingCurveMath.CurveState memory stateAfter = pool.curveState();
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(stateAfter.realUsdcReserve, stateBefore.realUsdcReserve);
+        assertEq(stateAfter.realTokenReserve, stateBefore.realTokenReserve);
+        assertEq(stateAfter.virtualUsdcReserve, stateBefore.virtualUsdcReserve);
+        assertEq(stateAfter.virtualTokenReserve, stateBefore.virtualTokenReserve);
+        assertEq(stateAfter.accruedProtocolFees, 0);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.GraduationPending));
+        assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), DEFAULT_GRADUATION_THRESHOLD + quoteAssetDonation);
+        assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_SweepProtocolFeesSucceedsAfterGraduationWithoutChangingMigrationResults() public {
+        uint256 realUsdcReserve = 10_000;
+        uint256 realTokenReserve = tokenSupply() - 3 ether;
+        uint256 accruedProtocolFees = 250;
+        uint256 quoteAssetDonation = 45;
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(liquidityAdapter), realUsdcReserve, realTokenReserve, accruedProtocolFees, 0, quoteAssetDonation
+        );
+
+        pool.graduate();
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
+        uint256 adapterTokenBefore = token.balanceOf(address(liquidityAdapter));
+        uint256 adapterQuoteBefore = quoteAsset.balanceOf(address(liquidityAdapter));
+
+        vm.prank(OTHER_ACCOUNT);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        BondingCurveMath.CurveState memory stateAfter = pool.curveState();
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(stateAfter.realUsdcReserve, stateBefore.realUsdcReserve);
+        assertEq(stateAfter.realTokenReserve, stateBefore.realTokenReserve);
+        assertEq(stateAfter.virtualUsdcReserve, stateBefore.virtualUsdcReserve);
+        assertEq(stateAfter.virtualTokenReserve, stateBefore.virtualTokenReserve);
+        assertEq(stateAfter.accruedProtocolFees, 0);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Graduated));
+        assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
+        assertEq(token.balanceOf(address(liquidityAdapter)), adapterTokenBefore);
+        assertEq(quoteAsset.balanceOf(address(liquidityAdapter)), adapterQuoteBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), quoteAssetDonation);
+        assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
+        _assertPoolSolvency(pool);
+    }
+
+    function test_SweepProtocolFeesDoesNotSweepDonationsOrChangeBuyQuotes() public {
+        uint256 realUsdcReserve = SELL_TEST_REAL_USDC_RESERVE;
+        uint256 realTokenReserve = tokenSupply() - 2 ether;
+        uint256 accruedProtocolFees = 123;
+        uint256 quoteAssetDonation = 5000;
+        (LaunchPoolHarness pool,) = _prepareSweepFixture(
+            realUsdcReserve, realTokenReserve, accruedProtocolFees, 0, quoteAssetDonation, LaunchPool.PoolStatus.Active
+        );
+
+        (BondingCurveMath.BuyQuote memory buyQuoteBefore, bool reachesBefore) = pool.quoteBuy(10_000);
+        uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
+
+        vm.prank(CAROL);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        (BondingCurveMath.BuyQuote memory buyQuoteAfter, bool reachesAfter) = pool.quoteBuy(10_000);
+
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(buyQuoteBefore.fee, buyQuoteAfter.fee);
+        assertEq(buyQuoteBefore.netUsdcIn, buyQuoteAfter.netUsdcIn);
+        assertEq(buyQuoteBefore.tokenAmountOut, buyQuoteAfter.tokenAmountOut);
+        assertEq(buyQuoteBefore.nextState.realUsdcReserve, buyQuoteAfter.nextState.realUsdcReserve);
+        assertEq(buyQuoteBefore.nextState.realTokenReserve, buyQuoteAfter.nextState.realTokenReserve);
+        assertEq(buyQuoteBefore.nextState.virtualUsdcReserve, buyQuoteAfter.nextState.virtualUsdcReserve);
+        assertEq(buyQuoteBefore.nextState.virtualTokenReserve, buyQuoteAfter.nextState.virtualTokenReserve);
+        assertEq(reachesBefore, reachesAfter);
+        assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), realUsdcReserve + quoteAssetDonation);
+        assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
+    }
+
+    function test_SweepProtocolFeesDoesNotChangeValidSellQuotes() public {
+        uint256 accruedProtocolFees = 123;
+        uint256 quoteAssetDonation = 5000;
+        (LaunchPoolHarness pool,) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            SELL_TEST_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+        LibrARCToken token = LibrARCToken(address(pool.launchToken()));
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.prank(address(pool));
+        assertTrue(token.transfer(ALICE, tokenSupply() - SELL_TEST_REAL_TOKEN_RESERVE));
+
+        quoteAsset.mint(address(pool), SELL_TEST_REAL_USDC_RESERVE + accruedProtocolFees);
+        quoteAsset.mint(ALICE, quoteAssetDonation);
+
+        vm.prank(ALICE);
+        assertTrue(quoteAsset.transfer(address(pool), quoteAssetDonation));
+
+        pool.exposedSetAccountedState(
+            SELL_TEST_REAL_USDC_RESERVE, SELL_TEST_REAL_TOKEN_RESERVE, accruedProtocolFees, LaunchPool.PoolStatus.Active
+        );
+
+        BondingCurveMath.SellQuote memory sellQuoteBefore = pool.quoteSell(2 ether);
+        uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
+
+        vm.prank(CAROL);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        BondingCurveMath.SellQuote memory sellQuoteAfter = pool.quoteSell(2 ether);
+
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(sellQuoteBefore.fee, sellQuoteAfter.fee);
+        assertEq(sellQuoteBefore.grossUsdcAmountOut, sellQuoteAfter.grossUsdcAmountOut);
+        assertEq(sellQuoteBefore.netUsdcAmountOut, sellQuoteAfter.netUsdcAmountOut);
+        assertEq(sellQuoteBefore.nextState.realUsdcReserve, sellQuoteAfter.nextState.realUsdcReserve);
+        assertEq(sellQuoteBefore.nextState.realTokenReserve, sellQuoteAfter.nextState.realTokenReserve);
+        assertEq(sellQuoteBefore.nextState.virtualUsdcReserve, sellQuoteAfter.nextState.virtualUsdcReserve);
+        assertEq(sellQuoteBefore.nextState.virtualTokenReserve, sellQuoteAfter.nextState.virtualTokenReserve);
+        assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), SELL_TEST_REAL_USDC_RESERVE + quoteAssetDonation);
+        assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
+    }
+
+    function test_SweepProtocolFeesFailingTransferRollsBackAndCanBeRetried() public {
+        uint256 realUsdcReserve = 4000;
+        uint256 accruedProtocolFees = 250;
+        uint256 totalSupply_ = tokenSupply();
+        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
+            _deployFailingPool(18, 6, totalSupply_);
+
+        _fundCustomPoolExact(pool, launchToken_, totalSupply_);
+        pool.initialize();
+
+        vm.prank(address(pool));
+        assertTrue(launchToken_.transfer(ALICE, 1 ether));
+
+        quoteToken_.mint(address(pool), realUsdcReserve + accruedProtocolFees);
+        pool.exposedSetAccountedState(
+            realUsdcReserve, totalSupply_ - 1 ether, accruedProtocolFees, LaunchPool.PoolStatus.Active
+        );
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolLaunchBefore = launchToken_.balanceOf(address(pool));
+        uint256 poolQuoteBefore = quoteToken_.balanceOf(address(pool));
+        uint256 feeVaultQuoteBefore = quoteToken_.balanceOf(address(feeVault));
+
+        quoteToken_.setFailTransfer(true);
+
+        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(quoteToken_)));
+        pool.sweepProtocolFees();
+
+        _assertProtocolFeeSweepRollback(
+            pool,
+            launchToken_,
+            quoteToken_,
+            stateBefore,
+            LaunchPool.PoolStatus.Active,
+            poolLaunchBefore,
+            poolQuoteBefore,
+            feeVaultQuoteBefore
+        );
+
+        quoteToken_.setFailTransfer(false);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(quoteToken_.balanceOf(address(pool)), realUsdcReserve);
+        assertEq(quoteToken_.balanceOf(address(feeVault)), accruedProtocolFees);
+    }
+
+    function test_SweepProtocolFeesFeeOnTransferQuoteAssetRevertsAndRollsBack() public {
+        uint256 realUsdcReserve = 4000;
+        uint256 accruedProtocolFees = 100;
+        LibrARCToken token = new LibrARCToken("LibrARC", "LARC", address(this));
+        FeeOnTransferQuoteAsset feeOnTransferQuoteAsset = new FeeOnTransferQuoteAsset(100);
+        LaunchPoolHarness pool = _deployCustomPool(
+            address(token),
+            address(feeOnTransferQuoteAsset),
+            token.FIXED_SUPPLY(),
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        vm.prank(address(pool));
+        assertTrue(token.transfer(ALICE, 1 ether));
+
+        feeOnTransferQuoteAsset.mint(address(pool), realUsdcReserve + accruedProtocolFees);
+        pool.exposedSetAccountedState(
+            realUsdcReserve, token.FIXED_SUPPLY() - 1 ether, accruedProtocolFees, LaunchPool.PoolStatus.Active
+        );
+
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 poolLaunchBefore = token.balanceOf(address(pool));
+        uint256 poolQuoteBefore = feeOnTransferQuoteAsset.balanceOf(address(pool));
+        uint256 feeVaultQuoteBefore = feeOnTransferQuoteAsset.balanceOf(address(feeVault));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.ProtocolFeeSweepBalanceMismatch.selector,
+                poolQuoteBefore - accruedProtocolFees,
+                poolQuoteBefore - accruedProtocolFees,
+                feeVaultQuoteBefore + accruedProtocolFees,
+                feeVaultQuoteBefore + accruedProtocolFees - 1
+            )
+        );
+        pool.sweepProtocolFees();
+
+        _assertProtocolFeeSweepRollback(
+            pool,
+            token,
+            feeOnTransferQuoteAsset,
+            stateBefore,
+            LaunchPool.PoolStatus.Active,
+            poolLaunchBefore,
+            poolQuoteBefore,
+            feeVaultQuoteBefore
+        );
+    }
+
+    function testFuzz_SweepProtocolFeesTransfersEntireAccruedAmount(
+        address caller,
+        uint256 realUsdcReserve,
+        uint256 accruedProtocolFees,
+        uint256 quoteAssetDonation
+    ) public {
+        vm.assume(caller != address(0) && caller != address(feeVault));
+
+        realUsdcReserve = bound(realUsdcReserve, 0, DEFAULT_GRADUATION_THRESHOLD - 1);
+        accruedProtocolFees = bound(accruedProtocolFees, 1, 1_000_000_000);
+        quoteAssetDonation = bound(quoteAssetDonation, 0, 1_000_000_000);
+
+        (LaunchPoolHarness pool,) = _prepareSweepFixture(
+            realUsdcReserve, tokenSupply(), accruedProtocolFees, 0, quoteAssetDonation, LaunchPool.PoolStatus.Active
+        );
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
+        uint256 callerQuoteBefore = quoteAsset.balanceOf(caller);
+
+        vm.prank(caller);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        BondingCurveMath.CurveState memory stateAfter = pool.curveState();
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(stateAfter.realUsdcReserve, stateBefore.realUsdcReserve);
+        assertEq(stateAfter.realTokenReserve, stateBefore.realTokenReserve);
+        assertEq(stateAfter.virtualUsdcReserve, stateBefore.virtualUsdcReserve);
+        assertEq(stateAfter.virtualTokenReserve, stateBefore.virtualTokenReserve);
+        assertEq(stateAfter.accruedProtocolFees, 0);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), realUsdcReserve + quoteAssetDonation);
+        assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
+        assertEq(quoteAsset.balanceOf(caller), callerQuoteBefore);
+        assertGe(quoteAsset.balanceOf(address(pool)), stateAfter.realUsdcReserve);
+
+        vm.expectRevert(LaunchPool.NoProtocolFees.selector);
+        pool.sweepProtocolFees();
+    }
+
+    function testFuzz_SweepProtocolFeesWorksPermissionlesslyInGraduationPending(
+        address caller,
+        uint256 accruedProtocolFees,
+        uint256 quoteAssetDonation
+    ) public {
+        vm.assume(caller != address(0) && caller != address(feeVault));
+
+        accruedProtocolFees = bound(accruedProtocolFees, 1, 1_000_000);
+        quoteAssetDonation = bound(quoteAssetDonation, 0, 1_000_000);
+
+        (LaunchPoolHarness pool,) = _prepareSweepFixture(
+            DEFAULT_GRADUATION_THRESHOLD,
+            tokenSupply(),
+            accruedProtocolFees,
+            0,
+            quoteAssetDonation,
+            LaunchPool.PoolStatus.GraduationPending
+        );
+        BondingCurveMath.CurveState memory stateBefore = pool.curveState();
+        uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
+
+        vm.prank(caller);
+        uint256 amountSwept = pool.sweepProtocolFees();
+
+        BondingCurveMath.CurveState memory stateAfter = pool.curveState();
+        assertEq(amountSwept, accruedProtocolFees);
+        assertEq(stateAfter.realUsdcReserve, stateBefore.realUsdcReserve);
+        assertEq(stateAfter.realTokenReserve, stateBefore.realTokenReserve);
+        assertEq(stateAfter.virtualUsdcReserve, stateBefore.virtualUsdcReserve);
+        assertEq(stateAfter.virtualTokenReserve, stateBefore.virtualTokenReserve);
+        assertEq(stateAfter.accruedProtocolFees, 0);
+        assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.GraduationPending));
+        assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
+        assertEq(quoteAsset.balanceOf(address(pool)), DEFAULT_GRADUATION_THRESHOLD + quoteAssetDonation);
+        assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
+    }
+
     function testFuzz_SuccessfulGraduationMigratesOnlyRealReserves(
         uint256 realUsdcReserve,
         uint256 realTokenReserve,
@@ -2481,6 +2923,56 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
     }
 
+    function _prepareSweepFixture(
+        uint256 realUsdcReserve,
+        uint256 realTokenReserve,
+        uint256 accruedProtocolFees,
+        uint256 launchTokenDonation,
+        uint256 quoteAssetDonation,
+        LaunchPool.PoolStatus status_
+    ) internal returns (LaunchPoolHarness pool, LibrARCToken token) {
+        uint256 fixedSupply = tokenSupply();
+
+        token = new LibrARCToken("LibrARC", "LARC", address(this));
+        pool = _deployPool(
+            address(token),
+            token.FIXED_SUPPLY(),
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            DEFAULT_GRADUATION_THRESHOLD
+        );
+        _fundPoolExact(pool, token);
+        pool.initialize();
+
+        assertLe(realTokenReserve, fixedSupply);
+        assertLe(launchTokenDonation, fixedSupply - realTokenReserve);
+
+        uint256 tokenAmountToMoveOut = fixedSupply - realTokenReserve;
+        if (tokenAmountToMoveOut > 0) {
+            vm.prank(address(pool));
+            assertTrue(token.transfer(ALICE, tokenAmountToMoveOut));
+        }
+
+        if (launchTokenDonation > 0) {
+            vm.prank(ALICE);
+            assertTrue(token.transfer(address(pool), launchTokenDonation));
+        }
+
+        if (realUsdcReserve + accruedProtocolFees > 0) {
+            quoteAsset.mint(address(pool), realUsdcReserve + accruedProtocolFees);
+        }
+
+        if (quoteAssetDonation > 0) {
+            quoteAsset.mint(ALICE, quoteAssetDonation);
+            vm.prank(ALICE);
+            assertTrue(quoteAsset.transfer(address(pool), quoteAssetDonation));
+        }
+
+        pool.exposedSetAccountedState(realUsdcReserve, realTokenReserve, accruedProtocolFees, status_);
+    }
+
     function _deployCustomPool(
         address launchTokenAddress,
         address quoteTokenAddress,
@@ -2737,6 +3229,24 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(pool.quoteAsset().balanceOf(address(pool)), expectedQuoteAssetBalance);
         assertEq(pool.launchToken().allowance(address(pool), adapterAddress), 0);
         assertEq(pool.quoteAsset().allowance(address(pool), adapterAddress), 0);
+    }
+
+    function _assertProtocolFeeSweepRollback(
+        LaunchPoolHarness pool,
+        IERC20 launchToken_,
+        IERC20 quoteToken_,
+        BondingCurveMath.CurveState memory expectedState,
+        LaunchPool.PoolStatus expectedStatus,
+        uint256 expectedLaunchTokenBalance,
+        uint256 expectedQuoteAssetBalance,
+        uint256 expectedFeeVaultQuoteAssetBalance
+    ) internal view {
+        assertEq(uint256(pool.status()), uint256(expectedStatus));
+        _assertCurveStateEq(pool.curveState(), expectedState);
+        assertEq(pool.remainingGraduationCapacity(), pool.graduationThreshold() - expectedState.realUsdcReserve);
+        assertEq(launchToken_.balanceOf(address(pool)), expectedLaunchTokenBalance);
+        assertEq(quoteToken_.balanceOf(address(pool)), expectedQuoteAssetBalance);
+        assertEq(quoteToken_.balanceOf(address(feeVault)), expectedFeeVaultQuoteAssetBalance);
     }
 
     function tokenSupply() internal pure returns (uint256) {

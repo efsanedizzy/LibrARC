@@ -53,6 +53,14 @@ contract LaunchPool is ReentrancyGuard {
     error LaunchTokenAllowanceNotCleared(uint256 remainingAllowance);
     error QuoteAssetAllowanceNotCleared(uint256 remainingAllowance);
     error ProtocolFeeAccountingChanged(uint256 expectedAccruedProtocolFees, uint256 actualAccruedProtocolFees);
+    error PoolNotInitialized();
+    error NoProtocolFees();
+    error ProtocolFeeSweepBalanceMismatch(
+        uint256 expectedPoolQuoteAssetBalance,
+        uint256 actualPoolQuoteAssetBalance,
+        uint256 expectedFeeVaultQuoteAssetBalance,
+        uint256 actualFeeVaultQuoteAssetBalance
+    );
     error ZeroRecipient();
     error ExpiredDeadline(uint256 currentTimestamp, uint256 deadline);
     error InsufficientTokenOutput(uint256 minimumTokenAmountOut, uint256 actualTokenAmountOut);
@@ -130,6 +138,12 @@ contract LaunchPool is ReentrancyGuard {
         uint256 quoteAssetAmount,
         uint256 accruedProtocolFeesRemaining
     );
+
+    /// @notice Emitted when the complete accrued protocol-fee balance is swept to the immutable fee vault.
+    /// @param caller The permissionless caller that triggered the sweep.
+    /// @param feeVault The immutable fee-vault recipient.
+    /// @param amount The exact protocol-fee amount transferred.
+    event ProtocolFeesSwept(address indexed caller, address indexed feeVault, uint256 amount);
 
     /// @notice The factory allowed to perform one-time initialization.
     address public immutable factory;
@@ -339,6 +353,61 @@ contract LaunchPool is ReentrancyGuard {
         );
     }
 
+    /// @notice Sweeps the complete accrued protocol-fee balance to the immutable fee vault.
+    /// @dev This function is permissionless and preserves all user-backed reserve accounting, pricing inputs, and pool
+    /// lifecycle state.
+    /// @return amountSwept The exact accrued protocol-fee amount transferred to the fee vault.
+    function sweepProtocolFees() external nonReentrant returns (uint256 amountSwept) {
+        PoolStatus currentStatus = status;
+        if (currentStatus == PoolStatus.Uninitialized) revert PoolNotInitialized();
+
+        amountSwept = _accruedProtocolFees;
+        if (amountSwept == 0) revert NoProtocolFees();
+
+        uint256 realUsdcReserveBefore = _realUsdcReserve;
+        uint256 realTokenReserveBefore = _realTokenReserve;
+        uint256 virtualUsdcReserveBefore = virtualUsdcReserve;
+        uint256 virtualTokenReserveBefore = virtualTokenReserve;
+        uint256 remainingGraduationCapacityBefore = _remainingGraduationCapacity();
+        uint256 poolQuoteAssetBalanceBefore = quoteAsset.balanceOf(address(this));
+        uint256 feeVaultQuoteAssetBalanceBefore = quoteAsset.balanceOf(feeVault);
+        uint256 requiredQuoteCoverage = realUsdcReserveBefore + amountSwept;
+
+        if (poolQuoteAssetBalanceBefore < requiredQuoteCoverage) {
+            revert InsufficientQuoteAssetBalance(poolQuoteAssetBalanceBefore, requiredQuoteCoverage);
+        }
+
+        _accruedProtocolFees = 0;
+
+        quoteAsset.safeTransfer(feeVault, amountSwept);
+
+        uint256 poolQuoteAssetBalanceAfter = quoteAsset.balanceOf(address(this));
+        uint256 feeVaultQuoteAssetBalanceAfter = quoteAsset.balanceOf(feeVault);
+        uint256 expectedPoolQuoteAssetBalanceAfter = poolQuoteAssetBalanceBefore - amountSwept;
+        uint256 expectedFeeVaultQuoteAssetBalanceAfter = feeVaultQuoteAssetBalanceBefore + amountSwept;
+
+        if (
+            poolQuoteAssetBalanceAfter != expectedPoolQuoteAssetBalanceAfter
+                || feeVaultQuoteAssetBalanceAfter != expectedFeeVaultQuoteAssetBalanceAfter
+        ) {
+            revert ProtocolFeeSweepBalanceMismatch(
+                expectedPoolQuoteAssetBalanceAfter,
+                poolQuoteAssetBalanceAfter,
+                expectedFeeVaultQuoteAssetBalanceAfter,
+                feeVaultQuoteAssetBalanceAfter
+            );
+        }
+
+        assert(_realUsdcReserve == realUsdcReserveBefore);
+        assert(_realTokenReserve == realTokenReserveBefore);
+        assert(virtualUsdcReserve == virtualUsdcReserveBefore);
+        assert(virtualTokenReserve == virtualTokenReserveBefore);
+        assert(status == currentStatus);
+        assert(_remainingGraduationCapacity() == remainingGraduationCapacityBefore);
+
+        emit ProtocolFeesSwept(msg.sender, feeVault, amountSwept);
+    }
+
     /// @notice Executes a buy against the current internal bonding-curve state.
     /// @param usdcAmountIn The gross quote-asset input amount in 6-decimal units.
     /// @param minTokenAmountOut The minimum acceptable launch-token output amount.
@@ -461,7 +530,7 @@ contract LaunchPool is ReentrancyGuard {
     /// @notice Returns the remaining graduation capacity from internal accounting only.
     /// @return capacity The remaining quote-asset capacity before the pool reaches graduation.
     function remainingGraduationCapacity() external view returns (uint256 capacity) {
-        capacity = graduationThreshold - _realUsdcReserve;
+        capacity = _remainingGraduationCapacity();
     }
 
     /// @notice Returns whether trading is currently active for future execution phases.
@@ -528,6 +597,10 @@ contract LaunchPool is ReentrancyGuard {
         _realUsdcReserve = nextState.realUsdcReserve;
         _realTokenReserve = nextState.realTokenReserve;
         _accruedProtocolFees = nextState.accruedProtocolFees;
+    }
+
+    function _remainingGraduationCapacity() internal view returns (uint256 capacity) {
+        capacity = graduationThreshold - _realUsdcReserve;
     }
 
     receive() external payable {
