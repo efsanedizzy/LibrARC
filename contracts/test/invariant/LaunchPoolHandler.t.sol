@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Test} from "forge-std/Test.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {FeeVault} from "../../src/FeeVault.sol";
-import {LaunchFactory} from "../../src/LaunchFactory.sol";
-import {LaunchPool} from "../../src/LaunchPool.sol";
-import {LibrARCToken} from "../../src/LibrARCToken.sol";
-import {BondingCurveMath} from "../../src/libraries/BondingCurveMath.sol";
-import {MockLiquidityAdapter} from "../mocks/MockLiquidityAdapter.sol";
+import { FeeVault } from "../../src/FeeVault.sol";
+import { LaunchFactory } from "../../src/LaunchFactory.sol";
+import { LaunchPool } from "../../src/LaunchPool.sol";
+import { LibrARCToken } from "../../src/LibrARCToken.sol";
+import { BondingCurveMath } from "../../src/libraries/BondingCurveMath.sol";
+import { MockLiquidityAdapter } from "../mocks/MockLiquidityAdapter.sol";
 
 contract InvariantQuoteAsset is ERC20 {
-    constructor() ERC20("Arc USDC", "USDC") {}
+    constructor() ERC20("Arc USDC", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -145,7 +145,8 @@ contract LaunchPoolHandler is Test {
         address actor = _actor(actorSeed);
         uint256 actorBalance = quoteAsset.balanceOf(actor);
         uint256 remainingCapacity = pool.remainingGraduationCapacity();
-        uint256 maxGrossAmount = _min(actorBalance, _min(remainingCapacity, TEST_MAX_BUY_GROSS_USDC));
+        uint256 maxGrossAmount =
+            _min(actorBalance, _min(remainingCapacity, TEST_MAX_BUY_GROSS_USDC));
 
         if (maxGrossAmount == 0) {
             _observeStatus();
@@ -165,7 +166,9 @@ contract LaunchPoolHandler is Test {
         vm.startPrank(actor);
         quoteAsset.approve(address(pool), usdcAmountIn);
 
-        try pool.buy(usdcAmountIn, quote.tokenAmountOut, block.timestamp + 1 days, actor) returns (uint256 amountOut) {
+        try pool.buy(usdcAmountIn, quote.tokenAmountOut, block.timestamp + 1 days, actor) returns (
+            uint256 amountOut
+        ) {
             assertEq(amountOut, quote.tokenAmountOut);
             assertEq(token.balanceOf(actor), actorTokenBefore + amountOut);
             assertEq(quoteAsset.balanceOf(address(pool)), poolQuoteBefore + usdcAmountIn);
@@ -196,7 +199,8 @@ contract LaunchPoolHandler is Test {
             return;
         }
 
-        (uint256 tokenAmountIn, BondingCurveMath.SellQuote memory quote) = _pickValidSell(actorBalance, amountSeed);
+        (uint256 tokenAmountIn, BondingCurveMath.SellQuote memory quote) =
+            _pickValidSell(actorBalance, amountSeed);
         if (tokenAmountIn == 0) {
             _observeStatus();
             return;
@@ -208,7 +212,9 @@ contract LaunchPoolHandler is Test {
         vm.startPrank(actor);
         token.approve(address(pool), tokenAmountIn);
 
-        try pool.sell(tokenAmountIn, quote.netUsdcAmountOut, block.timestamp + 1 days, actor) returns (
+        try pool.sell(
+            tokenAmountIn, quote.netUsdcAmountOut, block.timestamp + 1 days, actor
+        ) returns (
             uint256 amountOut
         ) {
             assertEq(amountOut, quote.netUsdcAmountOut);
@@ -314,23 +320,33 @@ contract LaunchPoolHandler is Test {
 
             StateSnapshot memory afterSnapshot = _captureStateSnapshot();
             if (
-                afterSnapshot.curveState.realUsdcReserve != beforeSnapshot.curveState.realUsdcReserve
-                    || afterSnapshot.curveState.realTokenReserve != beforeSnapshot.curveState.realTokenReserve
-                    || afterSnapshot.curveState.virtualUsdcReserve != beforeSnapshot.curveState.virtualUsdcReserve
-                    || afterSnapshot.curveState.virtualTokenReserve != beforeSnapshot.curveState.virtualTokenReserve
+                afterSnapshot.curveState.realUsdcReserve
+                        != beforeSnapshot.curveState.realUsdcReserve
+                    || afterSnapshot.curveState.realTokenReserve
+                        != beforeSnapshot.curveState.realTokenReserve
+                    || afterSnapshot.curveState.virtualUsdcReserve
+                        != beforeSnapshot.curveState.virtualUsdcReserve
+                    || afterSnapshot.curveState.virtualTokenReserve
+                        != beforeSnapshot.curveState.virtualTokenReserve
                     || afterSnapshot.curveState.accruedProtocolFees != 0
-                    || afterSnapshot.remainingGraduationCapacity != beforeSnapshot.remainingGraduationCapacity
+                    || afterSnapshot.remainingGraduationCapacity
+                        != beforeSnapshot.remainingGraduationCapacity
                     || afterSnapshot.status != beforeSnapshot.status
                     || afterSnapshot.buysPaused != beforeSnapshot.buysPaused
                     || afterSnapshot.allTradingPaused != beforeSnapshot.allTradingPaused
-                    || !_samePricingRelevantBuyQuote(afterSnapshot.buyQuote, beforeSnapshot.buyQuote)
-                    || !_samePricingRelevantSellQuote(afterSnapshot.sellQuote, beforeSnapshot.sellQuote)
-                    || afterSnapshot.poolQuoteBalance != beforeSnapshot.poolQuoteBalance - amountSwept
+                    || !_samePricingRelevantBuyQuote(
+                        afterSnapshot.buyQuote, beforeSnapshot.buyQuote
+                    )
+                    || !_samePricingRelevantSellQuote(
+                            afterSnapshot.sellQuote, beforeSnapshot.sellQuote
+                        )
+                    || afterSnapshot.poolQuoteBalance
+                        != beforeSnapshot.poolQuoteBalance - amountSwept
                     || afterSnapshot.poolTokenBalance != beforeSnapshot.poolTokenBalance
             ) {
                 feeSweepAccountingViolation = true;
             }
-        } catch {}
+        } catch { }
 
         _observeStatus();
     }
@@ -346,12 +362,13 @@ contract LaunchPoolHandler is Test {
         try factory.pausePoolBuys(address(pool)) {
             StateSnapshot memory afterSnapshot = _captureStateSnapshot();
             if (
-                !_pauseActionPreservedAccounting(beforeSnapshot, afterSnapshot) || afterSnapshot.buysPaused != true
+                !_pauseActionPreservedAccounting(beforeSnapshot, afterSnapshot)
+                    || afterSnapshot.buysPaused != true
                     || afterSnapshot.allTradingPaused != beforeSnapshot.allTradingPaused
             ) {
                 pauseAccountingViolation = true;
             }
-        } catch {}
+        } catch { }
 
         _observeStatus();
     }
@@ -367,12 +384,13 @@ contract LaunchPoolHandler is Test {
         try factory.unpausePoolBuys(address(pool)) {
             StateSnapshot memory afterSnapshot = _captureStateSnapshot();
             if (
-                !_pauseActionPreservedAccounting(beforeSnapshot, afterSnapshot) || afterSnapshot.buysPaused != false
+                !_pauseActionPreservedAccounting(beforeSnapshot, afterSnapshot)
+                    || afterSnapshot.buysPaused != false
                     || afterSnapshot.allTradingPaused != beforeSnapshot.allTradingPaused
             ) {
                 pauseAccountingViolation = true;
             }
-        } catch {}
+        } catch { }
 
         _observeStatus();
     }
@@ -389,11 +407,12 @@ contract LaunchPoolHandler is Test {
             StateSnapshot memory afterSnapshot = _captureStateSnapshot();
             if (
                 !_pauseActionPreservedAccounting(beforeSnapshot, afterSnapshot)
-                    || afterSnapshot.allTradingPaused != true || afterSnapshot.buysPaused != beforeSnapshot.buysPaused
+                    || afterSnapshot.allTradingPaused != true
+                    || afterSnapshot.buysPaused != beforeSnapshot.buysPaused
             ) {
                 pauseAccountingViolation = true;
             }
-        } catch {}
+        } catch { }
 
         _observeStatus();
     }
@@ -410,11 +429,12 @@ contract LaunchPoolHandler is Test {
             StateSnapshot memory afterSnapshot = _captureStateSnapshot();
             if (
                 !_pauseActionPreservedAccounting(beforeSnapshot, afterSnapshot)
-                    || afterSnapshot.allTradingPaused != false || afterSnapshot.buysPaused != beforeSnapshot.buysPaused
+                    || afterSnapshot.allTradingPaused != false
+                    || afterSnapshot.buysPaused != beforeSnapshot.buysPaused
             ) {
                 pauseAccountingViolation = true;
             }
-        } catch {}
+        } catch { }
 
         _observeStatus();
     }
@@ -442,7 +462,7 @@ contract LaunchPoolHandler is Test {
             expectedRealUsdcReserve = 0;
             expectedRealTokenReserve = 0;
             successfulGraduationCount += 1;
-        } catch {}
+        } catch { }
 
         _observeStatus();
     }
@@ -513,7 +533,7 @@ contract LaunchPoolHandler is Test {
 
             try pool.quoteBuy(candidate) returns (BondingCurveMath.BuyQuote memory buyQuote, bool) {
                 return (candidate, buyQuote);
-            } catch {}
+            } catch { }
         }
     }
 
@@ -545,7 +565,7 @@ contract LaunchPoolHandler is Test {
 
             try pool.quoteSell(candidate) returns (BondingCurveMath.SellQuote memory sellQuote) {
                 return (candidate, sellQuote);
-            } catch {}
+            } catch { }
         }
     }
 
@@ -576,10 +596,12 @@ contract LaunchPoolHandler is Test {
             return snapshot;
         }
 
-        try pool.quoteBuy(probeAmount) returns (BondingCurveMath.BuyQuote memory quote, bool reaches) {
+        try pool.quoteBuy(probeAmount) returns (
+            BondingCurveMath.BuyQuote memory quote, bool reaches
+        ) {
             snapshot.valid = true;
             snapshot.data = abi.encode(quote, reaches);
-        } catch {}
+        } catch { }
     }
 
     function _captureSellQuoteSnapshot() internal view returns (QuoteSnapshot memory snapshot) {
@@ -587,19 +609,30 @@ contract LaunchPoolHandler is Test {
             return snapshot;
         }
 
-        uint256[7] memory candidates =
-            [uint256(1 ether), uint256(10 ether), 100 ether, 1000 ether, 10_000 ether, 100_000 ether, 1_000_000 ether];
+        uint256[7] memory candidates = [
+            uint256(1 ether),
+            uint256(10 ether),
+            100 ether,
+            1000 ether,
+            10_000 ether,
+            100_000 ether,
+            1_000_000 ether
+        ];
 
         for (uint256 i = 0; i < candidates.length; ++i) {
             try pool.quoteSell(candidates[i]) returns (BondingCurveMath.SellQuote memory quote) {
                 snapshot.valid = true;
                 snapshot.data = abi.encode(quote);
                 return snapshot;
-            } catch {}
+            } catch { }
         }
     }
 
-    function _sameQuote(QuoteSnapshot memory left, QuoteSnapshot memory right) internal pure returns (bool) {
+    function _sameQuote(QuoteSnapshot memory left, QuoteSnapshot memory right)
+        internal
+        pure
+        returns (bool)
+    {
         if (left.valid != right.valid) {
             return false;
         }
@@ -651,46 +684,58 @@ contract LaunchPoolHandler is Test {
             return true;
         }
 
-        BondingCurveMath.SellQuote memory leftQuote = abi.decode(left.data, (BondingCurveMath.SellQuote));
-        BondingCurveMath.SellQuote memory rightQuote = abi.decode(right.data, (BondingCurveMath.SellQuote));
+        BondingCurveMath.SellQuote memory leftQuote =
+            abi.decode(left.data, (BondingCurveMath.SellQuote));
+        BondingCurveMath.SellQuote memory rightQuote =
+            abi.decode(right.data, (BondingCurveMath.SellQuote));
 
-        return leftQuote.fee == rightQuote.fee && leftQuote.netUsdcAmountOut == rightQuote.netUsdcAmountOut
+        return leftQuote.fee == rightQuote.fee
+            && leftQuote.netUsdcAmountOut == rightQuote.netUsdcAmountOut
             && leftQuote.nextState.realUsdcReserve == rightQuote.nextState.realUsdcReserve
             && leftQuote.nextState.realTokenReserve == rightQuote.nextState.realTokenReserve
             && leftQuote.nextState.virtualUsdcReserve == rightQuote.nextState.virtualUsdcReserve
             && leftQuote.nextState.virtualTokenReserve == rightQuote.nextState.virtualTokenReserve;
     }
 
-    function _stateCoreMatches(StateSnapshot memory beforeSnapshot, StateSnapshot memory afterSnapshot)
-        internal
-        pure
-        returns (bool)
-    {
+    function _stateCoreMatches(
+        StateSnapshot memory beforeSnapshot,
+        StateSnapshot memory afterSnapshot
+    ) internal pure returns (bool) {
         return beforeSnapshot.curveState.realUsdcReserve == afterSnapshot.curveState.realUsdcReserve
-            && beforeSnapshot.curveState.realTokenReserve == afterSnapshot.curveState.realTokenReserve
-            && beforeSnapshot.curveState.virtualUsdcReserve == afterSnapshot.curveState.virtualUsdcReserve
-            && beforeSnapshot.curveState.virtualTokenReserve == afterSnapshot.curveState.virtualTokenReserve
-            && beforeSnapshot.curveState.accruedProtocolFees == afterSnapshot.curveState.accruedProtocolFees
-            && beforeSnapshot.remainingGraduationCapacity == afterSnapshot.remainingGraduationCapacity
-            && beforeSnapshot.status == afterSnapshot.status && beforeSnapshot.buysPaused == afterSnapshot.buysPaused
+            && beforeSnapshot.curveState.realTokenReserve
+                == afterSnapshot.curveState.realTokenReserve
+            && beforeSnapshot.curveState.virtualUsdcReserve
+                == afterSnapshot.curveState.virtualUsdcReserve
+            && beforeSnapshot.curveState.virtualTokenReserve
+                == afterSnapshot.curveState.virtualTokenReserve
+            && beforeSnapshot.curveState.accruedProtocolFees
+                == afterSnapshot.curveState.accruedProtocolFees
+            && beforeSnapshot.remainingGraduationCapacity
+                == afterSnapshot.remainingGraduationCapacity
+            && beforeSnapshot.status == afterSnapshot.status
+            && beforeSnapshot.buysPaused == afterSnapshot.buysPaused
             && beforeSnapshot.allTradingPaused == afterSnapshot.allTradingPaused
             && _sameQuote(beforeSnapshot.buyQuote, afterSnapshot.buyQuote)
             && _sameQuote(beforeSnapshot.sellQuote, afterSnapshot.sellQuote);
     }
 
-    function _pauseActionPreservedAccounting(StateSnapshot memory beforeSnapshot, StateSnapshot memory afterSnapshot)
-        internal
-        pure
-        returns (bool)
-    {
+    function _pauseActionPreservedAccounting(
+        StateSnapshot memory beforeSnapshot,
+        StateSnapshot memory afterSnapshot
+    ) internal pure returns (bool) {
         return beforeSnapshot.curveState.realUsdcReserve == afterSnapshot.curveState.realUsdcReserve
-            && beforeSnapshot.curveState.realTokenReserve == afterSnapshot.curveState.realTokenReserve
-            && beforeSnapshot.curveState.virtualUsdcReserve == afterSnapshot.curveState.virtualUsdcReserve
-            && beforeSnapshot.curveState.virtualTokenReserve == afterSnapshot.curveState.virtualTokenReserve
-            && beforeSnapshot.curveState.accruedProtocolFees == afterSnapshot.curveState.accruedProtocolFees
+            && beforeSnapshot.curveState.realTokenReserve
+                == afterSnapshot.curveState.realTokenReserve
+            && beforeSnapshot.curveState.virtualUsdcReserve
+                == afterSnapshot.curveState.virtualUsdcReserve
+            && beforeSnapshot.curveState.virtualTokenReserve
+                == afterSnapshot.curveState.virtualTokenReserve
+            && beforeSnapshot.curveState.accruedProtocolFees
+                == afterSnapshot.curveState.accruedProtocolFees
             && beforeSnapshot.poolQuoteBalance == afterSnapshot.poolQuoteBalance
             && beforeSnapshot.poolTokenBalance == afterSnapshot.poolTokenBalance
-            && beforeSnapshot.remainingGraduationCapacity == afterSnapshot.remainingGraduationCapacity
+            && beforeSnapshot.remainingGraduationCapacity
+                == afterSnapshot.remainingGraduationCapacity
             && beforeSnapshot.status == afterSnapshot.status
             && _sameQuote(beforeSnapshot.buyQuote, afterSnapshot.buyQuote)
             && _sameQuote(beforeSnapshot.sellQuote, afterSnapshot.sellQuote);

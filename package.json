@@ -23,7 +23,7 @@
       "rustfmt"
     ],
     "*.sol": [
-      "forge fmt"
+      "forge fmt --root contracts"
     ]
   },
   "devDependencies": {

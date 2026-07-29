@@ -4,20 +4,20 @@ pragma solidity 0.8.26;
 import {
     AccessControlDefaultAdminRules
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {
     IAccessControlDefaultAdminRules
 } from "@openzeppelin/contracts/access/extensions/IAccessControlDefaultAdminRules.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import {Test} from "forge-std/Test.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {FeeVault} from "../src/FeeVault.sol";
+import { FeeVault } from "../src/FeeVault.sol";
 
 contract MockERC20 is ERC20 {
-    constructor() ERC20("Mock Token", "MOCK") {}
+    constructor() ERC20("Mock Token", "MOCK") { }
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -113,7 +113,9 @@ contract FeeVaultTest is Test, IERC20Errors {
         vm.prank(OTHER_ACCOUNT);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, treasuryManagerRole
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                OTHER_ACCOUNT,
+                treasuryManagerRole
             )
         );
         vault.updateTreasury(UPDATED_TREASURY);
@@ -143,7 +145,9 @@ contract FeeVaultTest is Test, IERC20Errors {
         vm.prank(OTHER_ACCOUNT);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, withdrawerRole
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                OTHER_ACCOUNT,
+                withdrawerRole
             )
         );
         vault.withdrawToken(token, 40);
@@ -166,7 +170,9 @@ contract FeeVaultTest is Test, IERC20Errors {
 
         vm.prank(INITIAL_ADMIN);
         vm.expectRevert(
-            abi.encodeWithSelector(ERC20InsufficientBalance.selector, address(vault), uint256(50), uint256(100))
+            abi.encodeWithSelector(
+                ERC20InsufficientBalance.selector, address(vault), uint256(50), uint256(100)
+            )
         );
         vault.withdrawToken(token, 100);
     }
@@ -175,7 +181,11 @@ contract FeeVaultTest is Test, IERC20Errors {
         falseReturnToken.mint(address(vault), 25);
 
         vm.prank(INITIAL_ADMIN);
-        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(falseReturnToken)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SafeERC20.SafeERC20FailedOperation.selector, address(falseReturnToken)
+            )
+        );
         vault.withdrawToken(falseReturnToken, 10);
     }
 
@@ -213,7 +223,8 @@ contract FeeVaultTest is Test, IERC20Errors {
         vm.prank(PENDING_ADMIN);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControlDefaultAdminRules.AccessControlEnforcedDefaultAdminDelay.selector, acceptSchedule
+                IAccessControlDefaultAdminRules.AccessControlEnforcedDefaultAdminDelay.selector,
+                acceptSchedule
             )
         );
         vault.acceptDefaultAdminTransfer();

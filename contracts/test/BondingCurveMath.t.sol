@@ -1,25 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {stdError} from "forge-std/StdError.sol";
+import { Test } from "forge-std/Test.sol";
+import { stdError } from "forge-std/StdError.sol";
 
-import {BondingCurveMath} from "../src/libraries/BondingCurveMath.sol";
+import { BondingCurveMath } from "../src/libraries/BondingCurveMath.sol";
 
 contract BondingCurveMathHarness {
-    function validateInitialization(BondingCurveMath.CurveState memory state, uint256 totalTokenSupply) external pure {
+    function validateInitialization(
+        BondingCurveMath.CurveState memory state,
+        uint256 totalTokenSupply
+    ) external pure {
         BondingCurveMath.validateInitialization(state, totalTokenSupply);
     }
 
-    function effectiveReserves(BondingCurveMath.CurveState memory state) external pure returns (uint256, uint256) {
+    function effectiveReserves(BondingCurveMath.CurveState memory state)
+        external
+        pure
+        returns (uint256, uint256)
+    {
         return BondingCurveMath.effectiveReserves(state);
     }
 
-    function quoteBuy(BondingCurveMath.CurveState memory state, uint256 usdcAmountIn, uint256 buyFeeBps)
-        external
-        pure
-        returns (BondingCurveMath.BuyQuote memory)
-    {
+    function quoteBuy(
+        BondingCurveMath.CurveState memory state,
+        uint256 usdcAmountIn,
+        uint256 buyFeeBps
+    ) external pure returns (BondingCurveMath.BuyQuote memory) {
         return BondingCurveMath.quoteBuy(state, usdcAmountIn, buyFeeBps);
     }
 
@@ -32,7 +39,11 @@ contract BondingCurveMathHarness {
         return BondingCurveMath.quoteSell(state, tokenAmountIn, sellFeeBps, totalTokenSupply);
     }
 
-    function quoteBuyEchoState(BondingCurveMath.CurveState memory state, uint256 usdcAmountIn, uint256 buyFeeBps)
+    function quoteBuyEchoState(
+        BondingCurveMath.CurveState memory state,
+        uint256 usdcAmountIn,
+        uint256 buyFeeBps
+    )
         external
         pure
         returns (
@@ -135,7 +146,8 @@ contract BondingCurveMathTest is Test {
             accruedProtocolFees: 777
         });
 
-        (uint256 effectiveUsdcReserve, uint256 effectiveTokenReserve) = harness.effectiveReserves(state);
+        (uint256 effectiveUsdcReserve, uint256 effectiveTokenReserve) =
+            harness.effectiveReserves(state);
 
         assertEq(effectiveUsdcReserve, 200);
         assertEq(effectiveTokenReserve, 1000);
@@ -166,7 +178,8 @@ contract BondingCurveMathTest is Test {
     }
 
     function test_KnownSellQuoteWithNonZeroFee() public view {
-        BondingCurveMath.SellQuote memory quote = harness.quoteSell(_knownSellState(), 250, 500, 1000);
+        BondingCurveMath.SellQuote memory quote =
+            harness.quoteSell(_knownSellState(), 250, 500, 1000);
 
         assertEq(quote.fee, 10);
         assertEq(quote.grossUsdcAmountOut, 200);
@@ -184,7 +197,8 @@ contract BondingCurveMathTest is Test {
     }
 
     function test_SellStateUpdateIsCorrect() public view {
-        BondingCurveMath.SellQuote memory quote = harness.quoteSell(_knownSellState(), 250, 500, 1000);
+        BondingCurveMath.SellQuote memory quote =
+            harness.quoteSell(_knownSellState(), 250, 500, 1000);
 
         assertEq(quote.nextState.realUsdcReserve, 300);
         assertEq(quote.nextState.realTokenReserve, 450);
@@ -195,7 +209,8 @@ contract BondingCurveMathTest is Test {
 
     function test_VirtualReservesRemainUnchanged() public view {
         BondingCurveMath.BuyQuote memory buyQuote = harness.quoteBuy(_knownBuyState(), 50, 0);
-        BondingCurveMath.SellQuote memory sellQuote = harness.quoteSell(_knownSellState(), 250, 0, 1000);
+        BondingCurveMath.SellQuote memory sellQuote =
+            harness.quoteSell(_knownSellState(), 250, 0, 1000);
 
         assertEq(buyQuote.nextState.virtualUsdcReserve, _knownBuyState().virtualUsdcReserve);
         assertEq(buyQuote.nextState.virtualTokenReserve, _knownBuyState().virtualTokenReserve);
@@ -213,7 +228,9 @@ contract BondingCurveMathTest is Test {
 
         assertEq(quoteWithoutFees.tokenAmountOut, quoteWithFees.tokenAmountOut);
         assertEq(quoteWithoutFees.netUsdcIn, quoteWithFees.netUsdcIn);
-        assertEq(quoteWithoutFees.nextState.realUsdcReserve, quoteWithFees.nextState.realUsdcReserve);
+        assertEq(
+            quoteWithoutFees.nextState.realUsdcReserve, quoteWithFees.nextState.realUsdcReserve
+        );
         assertEq(quoteWithFees.nextState.accruedProtocolFees, 1001);
     }
 
@@ -311,8 +328,10 @@ contract BondingCurveMathTest is Test {
 
     function test_QuoteBuyDoesNotMutateItsInputMemoryStateUnexpectedly() public view {
         BondingCurveMath.CurveState memory state = _knownBuyState();
-        (BondingCurveMath.CurveState memory originalState, BondingCurveMath.CurveState memory stateAfter,) =
-            harness.quoteBuyEchoState(state, 100, 250);
+        (
+            BondingCurveMath.CurveState memory originalState,
+            BondingCurveMath.CurveState memory stateAfter,
+        ) = harness.quoteBuyEchoState(state, 100, 250);
 
         _assertStateEq(originalState, state);
         _assertStateEq(stateAfter, state);
@@ -320,8 +339,10 @@ contract BondingCurveMathTest is Test {
 
     function test_QuoteSellDoesNotMutateItsInputMemoryStateUnexpectedly() public view {
         BondingCurveMath.CurveState memory state = _knownSellState();
-        (BondingCurveMath.CurveState memory originalState, BondingCurveMath.CurveState memory stateAfter,) =
-            harness.quoteSellEchoState(state, 250, 500, 1000);
+        (
+            BondingCurveMath.CurveState memory originalState,
+            BondingCurveMath.CurveState memory stateAfter,
+        ) = harness.quoteSellEchoState(state, 250, 500, 1000);
 
         _assertStateEq(originalState, state);
         _assertStateEq(stateAfter, state);
@@ -356,7 +377,8 @@ contract BondingCurveMathTest is Test {
             accruedProtocolFees: 0
         });
 
-        BondingCurveMath.SellQuote memory quote = harness.quoteSell(state, largeTokenAmount, 0, largeTokenAmount);
+        BondingCurveMath.SellQuote memory quote =
+            harness.quoteSell(state, largeTokenAmount, 0, largeTokenAmount);
 
         assertEq(quote.grossUsdcAmountOut, halfUsdcReserve);
         assertEq(quote.netUsdcAmountOut, halfUsdcReserve);
@@ -487,7 +509,8 @@ contract BondingCurveMathTest is Test {
         uint256 tokenAmountIn = bound(rawTokenAmountIn, 1, effectiveTokenReserve);
         uint256 feeBps = bound(rawFeeBps, 0, 9999);
         uint256 accruedProtocolFees = bound(rawAccruedProtocolFees, 0, 10 ** 18);
-        uint256 totalTokenSupply = realTokenReserve + tokenAmountIn + bound(rawSupplyHeadroom, 0, 10 ** 18);
+        uint256 totalTokenSupply =
+            realTokenReserve + tokenAmountIn + bound(rawSupplyHeadroom, 0, 10 ** 18);
 
         BondingCurveMath.CurveState memory state = BondingCurveMath.CurveState({
             realUsdcReserve: realUsdcReserve,
@@ -497,7 +520,8 @@ contract BondingCurveMathTest is Test {
             accruedProtocolFees: accruedProtocolFees
         });
 
-        BondingCurveMath.SellQuote memory quote = harness.quoteSell(state, tokenAmountIn, feeBps, totalTokenSupply);
+        BondingCurveMath.SellQuote memory quote =
+            harness.quoteSell(state, tokenAmountIn, feeBps, totalTokenSupply);
         uint256 preProduct = (realUsdcReserve + virtualUsdcReserve) * effectiveTokenReserve;
         uint256 postProduct = (quote.nextState.realUsdcReserve + quote.nextState.virtualUsdcReserve)
             * (quote.nextState.realTokenReserve + quote.nextState.virtualTokenReserve);
@@ -621,20 +645,20 @@ contract BondingCurveMathTest is Test {
         });
     }
 
-    function _assertBuyQuoteEq(BondingCurveMath.BuyQuote memory left, BondingCurveMath.BuyQuote memory right)
-        internal
-        pure
-    {
+    function _assertBuyQuoteEq(
+        BondingCurveMath.BuyQuote memory left,
+        BondingCurveMath.BuyQuote memory right
+    ) internal pure {
         assertEq(left.fee, right.fee);
         assertEq(left.netUsdcIn, right.netUsdcIn);
         assertEq(left.tokenAmountOut, right.tokenAmountOut);
         _assertStateEq(left.nextState, right.nextState);
     }
 
-    function _assertStateEq(BondingCurveMath.CurveState memory left, BondingCurveMath.CurveState memory right)
-        internal
-        pure
-    {
+    function _assertStateEq(
+        BondingCurveMath.CurveState memory left,
+        BondingCurveMath.CurveState memory right
+    ) internal pure {
         assertEq(left.realUsdcReserve, right.realUsdcReserve);
         assertEq(left.realTokenReserve, right.realTokenReserve);
         assertEq(left.virtualUsdcReserve, right.virtualUsdcReserve);

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import {ILiquidityAdapter} from "../../src/interfaces/ILiquidityAdapter.sol";
+import { ILiquidityAdapter } from "../../src/interfaces/ILiquidityAdapter.sol";
 
 /// @title MockLiquidityAdapter
 /// @notice Test-only mock adapter for future LaunchPool graduation tests.
@@ -81,7 +81,13 @@ contract MockLiquidityAdapter is ILiquidityAdapter {
         );
 
         emit MockMigrationExecuted(
-            msg.sender, launchToken, quoteAsset, launchTokenAmount, quoteAssetAmount, liquidityRecipient, migrationId
+            msg.sender,
+            launchToken,
+            quoteAsset,
+            launchTokenAmount,
+            quoteAssetAmount,
+            liquidityRecipient,
+            migrationId
         );
     }
 }

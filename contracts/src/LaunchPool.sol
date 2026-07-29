@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {ILiquidityAdapter} from "./interfaces/ILiquidityAdapter.sol";
-import {BondingCurveMath} from "./libraries/BondingCurveMath.sol";
+import { ILiquidityAdapter } from "./interfaces/ILiquidityAdapter.sol";
+import { BondingCurveMath } from "./libraries/BondingCurveMath.sol";
 
 /// @title LaunchPool
 /// @notice Launch pool for LibrARC token launches with bonding-curve trading and permissionless graduation.
@@ -42,7 +42,9 @@ contract LaunchPool is ReentrancyGuard {
     error PoolNotGraduationPending(PoolStatus currentStatus);
     error InvalidTokenTotalSupply(uint256 actualTotalSupply, uint256 expectedTotalSupply);
     error InsufficientTokenFunding(uint256 actualBalance, uint256 requiredBalance);
-    error GraduationThresholdExceeded(uint256 currentRealUsdcReserve, uint256 netUsdcIn, uint256 graduationThreshold);
+    error GraduationThresholdExceeded(
+        uint256 currentRealUsdcReserve, uint256 netUsdcIn, uint256 graduationThreshold
+    );
     error ZeroGraduationTokenReserve();
     error ZeroGraduationUsdcReserve();
     error InsufficientLaunchTokenBalance(uint256 actualBalance, uint256 requiredBalance);
@@ -52,7 +54,9 @@ contract LaunchPool is ReentrancyGuard {
     error QuoteAssetMigrationBalanceMismatch(uint256 expectedBalance, uint256 actualBalance);
     error LaunchTokenAllowanceNotCleared(uint256 remainingAllowance);
     error QuoteAssetAllowanceNotCleared(uint256 remainingAllowance);
-    error ProtocolFeeAccountingChanged(uint256 expectedAccruedProtocolFees, uint256 actualAccruedProtocolFees);
+    error ProtocolFeeAccountingChanged(
+        uint256 expectedAccruedProtocolFees, uint256 actualAccruedProtocolFees
+    );
     error PoolNotInitialized();
     error NoProtocolFees();
     error ProtocolFeeSweepBalanceMismatch(
@@ -77,7 +81,10 @@ contract LaunchPool is ReentrancyGuard {
     /// @param virtualUsdcReserve The immutable virtual USDC reserve used for pricing.
     /// @param virtualTokenReserve The immutable virtual token reserve used for pricing.
     event PoolInitialized(
-        address indexed launchToken, uint256 totalTokenSupply, uint256 virtualUsdcReserve, uint256 virtualTokenReserve
+        address indexed launchToken,
+        uint256 totalTokenSupply,
+        uint256 virtualUsdcReserve,
+        uint256 virtualTokenReserve
     );
 
     /// @notice Emitted when a buy executes successfully.
@@ -293,7 +300,9 @@ contract LaunchPool is ReentrancyGuard {
         _realTokenReserve = totalTokenSupply;
         status = PoolStatus.Active;
 
-        emit PoolInitialized(address(launchToken), totalTokenSupply, virtualUsdcReserve, virtualTokenReserve);
+        emit PoolInitialized(
+            address(launchToken), totalTokenSupply, virtualUsdcReserve, virtualTokenReserve
+        );
     }
 
     /// @notice Finalizes graduation by migrating only the user-backed real reserves through the immutable adapter.
@@ -329,19 +338,25 @@ contract LaunchPool is ReentrancyGuard {
         quoteAsset.forceApprove(address(liquidityAdapter), quoteAssetAmount);
 
         migrationId = liquidityAdapter.migrateLiquidity(
-            address(launchToken), address(quoteAsset), launchTokenAmount, quoteAssetAmount, liquidityRecipient
+            address(launchToken),
+            address(quoteAsset),
+            launchTokenAmount,
+            quoteAssetAmount,
+            liquidityRecipient
         );
         if (migrationId == bytes32(0)) revert ZeroMigrationId();
 
         launchToken.forceApprove(address(liquidityAdapter), 0);
         quoteAsset.forceApprove(address(liquidityAdapter), 0);
 
-        uint256 remainingLaunchTokenAllowance = launchToken.allowance(address(this), address(liquidityAdapter));
+        uint256 remainingLaunchTokenAllowance =
+            launchToken.allowance(address(this), address(liquidityAdapter));
         if (remainingLaunchTokenAllowance != 0) {
             revert LaunchTokenAllowanceNotCleared(remainingLaunchTokenAllowance);
         }
 
-        uint256 remainingQuoteAssetAllowance = quoteAsset.allowance(address(this), address(liquidityAdapter));
+        uint256 remainingQuoteAssetAllowance =
+            quoteAsset.allowance(address(this), address(liquidityAdapter));
         if (remainingQuoteAssetAllowance != 0) {
             revert QuoteAssetAllowanceNotCleared(remainingQuoteAssetAllowance);
         }
@@ -349,13 +364,17 @@ contract LaunchPool is ReentrancyGuard {
         uint256 launchTokenBalanceAfter = launchToken.balanceOf(address(this));
         uint256 expectedLaunchTokenBalanceAfter = launchTokenBalanceBefore - launchTokenAmount;
         if (launchTokenBalanceAfter != expectedLaunchTokenBalanceAfter) {
-            revert LaunchTokenMigrationBalanceMismatch(expectedLaunchTokenBalanceAfter, launchTokenBalanceAfter);
+            revert LaunchTokenMigrationBalanceMismatch(
+                expectedLaunchTokenBalanceAfter, launchTokenBalanceAfter
+            );
         }
 
         uint256 quoteAssetBalanceAfter = quoteAsset.balanceOf(address(this));
         uint256 expectedQuoteAssetBalanceAfter = quoteAssetBalanceBefore - quoteAssetAmount;
         if (quoteAssetBalanceAfter != expectedQuoteAssetBalanceAfter) {
-            revert QuoteAssetMigrationBalanceMismatch(expectedQuoteAssetBalanceAfter, quoteAssetBalanceAfter);
+            revert QuoteAssetMigrationBalanceMismatch(
+                expectedQuoteAssetBalanceAfter, quoteAssetBalanceAfter
+            );
         }
 
         if (_accruedProtocolFees != accruedProtocolFees) {
@@ -404,7 +423,8 @@ contract LaunchPool is ReentrancyGuard {
         uint256 poolQuoteAssetBalanceAfter = quoteAsset.balanceOf(address(this));
         uint256 feeVaultQuoteAssetBalanceAfter = quoteAsset.balanceOf(feeVault);
         uint256 expectedPoolQuoteAssetBalanceAfter = poolQuoteAssetBalanceBefore - amountSwept;
-        uint256 expectedFeeVaultQuoteAssetBalanceAfter = feeVaultQuoteAssetBalanceBefore + amountSwept;
+        uint256 expectedFeeVaultQuoteAssetBalanceAfter =
+            feeVaultQuoteAssetBalanceBefore + amountSwept;
 
         if (
             poolQuoteAssetBalanceAfter != expectedPoolQuoteAssetBalanceAfter
@@ -460,12 +480,15 @@ contract LaunchPool is ReentrancyGuard {
     /// @param deadline The latest timestamp at which the trade remains valid.
     /// @param recipient The address receiving the launch tokens.
     /// @return tokenAmountOut The exact launch-token output amount transferred to the recipient.
-    function buy(uint256 usdcAmountIn, uint256 minTokenAmountOut, uint256 deadline, address recipient)
-        external
-        nonReentrant
-        returns (uint256 tokenAmountOut)
-    {
-        tokenAmountOut = _executeBuy(msg.sender, msg.sender, recipient, usdcAmountIn, minTokenAmountOut, deadline);
+    function buy(
+        uint256 usdcAmountIn,
+        uint256 minTokenAmountOut,
+        uint256 deadline,
+        address recipient
+    ) external nonReentrant returns (uint256 tokenAmountOut) {
+        tokenAmountOut = _executeBuy(
+            msg.sender, msg.sender, recipient, usdcAmountIn, minTokenAmountOut, deadline
+        );
     }
 
     /// @notice Executes a factory-mediated buy that preserves the original creator as the recorded buyer.
@@ -487,7 +510,8 @@ contract LaunchPool is ReentrancyGuard {
         }
         if (buyer == address(0)) revert ZeroBuyer();
 
-        tokenAmountOut = _executeBuy(msg.sender, buyer, recipient, usdcAmountIn, minTokenAmountOut, deadline);
+        tokenAmountOut =
+            _executeBuy(msg.sender, buyer, recipient, usdcAmountIn, minTokenAmountOut, deadline);
     }
 
     /// @notice Executes a sell against the current internal bonding-curve state.
@@ -496,11 +520,12 @@ contract LaunchPool is ReentrancyGuard {
     /// @param deadline The latest timestamp at which the trade remains valid.
     /// @param recipient The address receiving quote asset.
     /// @return netUsdcAmountOut The exact quote-asset amount transferred to the recipient.
-    function sell(uint256 tokenAmountIn, uint256 minUsdcAmountOut, uint256 deadline, address recipient)
-        external
-        nonReentrant
-        returns (uint256 netUsdcAmountOut)
-    {
+    function sell(
+        uint256 tokenAmountIn,
+        uint256 minUsdcAmountOut,
+        uint256 deadline,
+        address recipient
+    ) external nonReentrant returns (uint256 netUsdcAmountOut) {
         _requireActiveStatus();
         _requireSellExecutionAllowed();
         if (recipient == address(0)) revert ZeroRecipient();
@@ -547,7 +572,9 @@ contract LaunchPool is ReentrancyGuard {
         quote = BondingCurveMath.quoteBuy(currentState, usdcAmountIn, buyFeeBps);
 
         if (quote.nextState.realUsdcReserve > graduationThreshold) {
-            revert GraduationThresholdExceeded(currentState.realUsdcReserve, quote.netUsdcIn, graduationThreshold);
+            revert GraduationThresholdExceeded(
+                currentState.realUsdcReserve, quote.netUsdcIn, graduationThreshold
+            );
         }
 
         reachesGraduationThreshold = quote.nextState.realUsdcReserve == graduationThreshold;
@@ -556,10 +583,15 @@ contract LaunchPool is ReentrancyGuard {
     /// @notice Returns a view-only sell quote from the current internal curve state.
     /// @param tokenAmountIn The launch-token input amount in 18-decimal units.
     /// @return quote The computed sell quote and its resulting next curve state.
-    function quoteSell(uint256 tokenAmountIn) external view returns (BondingCurveMath.SellQuote memory quote) {
+    function quoteSell(uint256 tokenAmountIn)
+        external
+        view
+        returns (BondingCurveMath.SellQuote memory quote)
+    {
         if (status != PoolStatus.Active) revert PoolNotActive(status);
 
-        quote = BondingCurveMath.quoteSell(curveState(), tokenAmountIn, sellFeeBps, totalTokenSupply);
+        quote =
+            BondingCurveMath.quoteSell(curveState(), tokenAmountIn, sellFeeBps, totalTokenSupply);
     }
 
     /// @notice Returns the current authoritative internal curve-accounting state.
@@ -613,14 +645,17 @@ contract LaunchPool is ReentrancyGuard {
         if (usdcAmountIn == 0) revert BondingCurveMath.ZeroInput();
 
         BondingCurveMath.CurveState memory currentState = curveState();
-        BondingCurveMath.BuyQuote memory quote = BondingCurveMath.quoteBuy(currentState, usdcAmountIn, buyFeeBps);
+        BondingCurveMath.BuyQuote memory quote =
+            BondingCurveMath.quoteBuy(currentState, usdcAmountIn, buyFeeBps);
         tokenAmountOut = quote.tokenAmountOut;
 
         if (tokenAmountOut < minTokenAmountOut) {
             revert InsufficientTokenOutput(minTokenAmountOut, tokenAmountOut);
         }
         if (quote.nextState.realUsdcReserve > graduationThreshold) {
-            revert GraduationThresholdExceeded(currentState.realUsdcReserve, quote.netUsdcIn, graduationThreshold);
+            revert GraduationThresholdExceeded(
+                currentState.realUsdcReserve, quote.netUsdcIn, graduationThreshold
+            );
         }
 
         _setCurveState(quote.nextState);

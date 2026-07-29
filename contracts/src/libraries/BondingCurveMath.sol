@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /// @title BondingCurveMath
 /// @notice Pure virtual-reserve constant-product math for LibrARC launch-pool quoting.
@@ -92,7 +92,10 @@ library BondingCurveMath {
     /// @notice Validates the required initial accounting state for a fresh launch pool.
     /// @param state Initial curve state to validate.
     /// @param totalTokenSupply Fixed token supply assigned to the launch pool.
-    function validateInitialization(CurveState memory state, uint256 totalTokenSupply) internal pure {
+    function validateInitialization(CurveState memory state, uint256 totalTokenSupply)
+        internal
+        pure
+    {
         if (totalTokenSupply == 0) revert InvalidTotalSupply();
         if (state.realUsdcReserve != 0) revert InvalidInitialRealUsdcReserve();
         if (state.accruedProtocolFees != 0) revert InvalidInitialProtocolFees();
@@ -138,8 +141,9 @@ library BondingCurveMath {
 
         (uint256 effectiveUsdcReserve, uint256 effectiveTokenReserve) = effectiveReserves(state);
         uint256 newEffectiveUsdcReserve = effectiveUsdcReserve + netUsdcIn;
-        uint256 newEffectiveTokenReserve =
-            Math.mulDiv(effectiveUsdcReserve, effectiveTokenReserve, newEffectiveUsdcReserve, Math.Rounding.Ceil);
+        uint256 newEffectiveTokenReserve = Math.mulDiv(
+            effectiveUsdcReserve, effectiveTokenReserve, newEffectiveUsdcReserve, Math.Rounding.Ceil
+        );
         uint256 tokenAmountOut = effectiveTokenReserve - newEffectiveTokenReserve;
 
         if (tokenAmountOut == 0) revert ZeroOutput();
@@ -153,7 +157,9 @@ library BondingCurveMath {
             accruedProtocolFees: state.accruedProtocolFees + fee
         });
 
-        quote = BuyQuote({fee: fee, netUsdcIn: netUsdcIn, tokenAmountOut: tokenAmountOut, nextState: nextState});
+        quote = BuyQuote({
+            fee: fee, netUsdcIn: netUsdcIn, tokenAmountOut: tokenAmountOut, nextState: nextState
+        });
     }
 
     /// @notice Quotes a sell against the current virtual-reserve constant-product state.
@@ -162,11 +168,12 @@ library BondingCurveMath {
     /// @param sellFeeBps Sell fee in basis points.
     /// @param totalTokenSupply Fixed total token supply enforced by the protocol.
     /// @return quote Sell result including the next curve state.
-    function quoteSell(CurveState memory state, uint256 tokenAmountIn, uint256 sellFeeBps, uint256 totalTokenSupply)
-        internal
-        pure
-        returns (SellQuote memory quote)
-    {
+    function quoteSell(
+        CurveState memory state,
+        uint256 tokenAmountIn,
+        uint256 sellFeeBps,
+        uint256 totalTokenSupply
+    ) internal pure returns (SellQuote memory quote) {
         if (tokenAmountIn == 0) revert ZeroInput();
         if (sellFeeBps >= BPS_DENOMINATOR) revert InvalidFeeBps();
 
@@ -175,8 +182,12 @@ library BondingCurveMath {
 
         (uint256 effectiveUsdcReserve, uint256 effectiveTokenReserve) = effectiveReserves(state);
         uint256 newEffectiveTokenReserve = effectiveTokenReserve + tokenAmountIn;
-        uint256 newEffectiveUsdcReserve =
-            Math.mulDiv(effectiveUsdcReserve, effectiveTokenReserve, newEffectiveTokenReserve, Math.Rounding.Ceil);
+        uint256 newEffectiveUsdcReserve = Math.mulDiv(
+            effectiveUsdcReserve,
+            effectiveTokenReserve,
+            newEffectiveTokenReserve,
+            Math.Rounding.Ceil
+        );
         uint256 grossUsdcAmountOut = effectiveUsdcReserve - newEffectiveUsdcReserve;
 
         if (grossUsdcAmountOut == 0) revert ZeroOutput();
@@ -195,7 +206,10 @@ library BondingCurveMath {
         });
 
         quote = SellQuote({
-            fee: fee, grossUsdcAmountOut: grossUsdcAmountOut, netUsdcAmountOut: netUsdcAmountOut, nextState: nextState
+            fee: fee,
+            grossUsdcAmountOut: grossUsdcAmountOut,
+            netUsdcAmountOut: netUsdcAmountOut,
+            nextState: nextState
         });
     }
 }

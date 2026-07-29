@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import {Test} from "forge-std/Test.sol";
+import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {LibrARCToken} from "../src/LibrARCToken.sol";
+import { LibrARCToken } from "../src/LibrARCToken.sol";
 
 contract LibrARCTokenTest is Test, IERC20Errors {
     address internal constant INITIAL_HOLDER = address(0xA11CE);
@@ -103,7 +103,11 @@ contract LibrARCTokenTest is Test, IERC20Errors {
     }
 
     function test_InsufficientBalanceTransferReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ERC20InsufficientBalance.selector, deployer, uint256(0), uint256(1)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20InsufficientBalance.selector, deployer, uint256(0), uint256(1)
+            )
+        );
         token.transfer(ALICE, 1);
     }
 
@@ -111,11 +115,17 @@ contract LibrARCTokenTest is Test, IERC20Errors {
         _assertSelectorUnavailable(abi.encodeWithSignature("mint(address,uint256)", ALICE, 1));
         _assertSelectorUnavailable(abi.encodeWithSignature("burn(uint256)", 1));
         _assertSelectorUnavailable(abi.encodeWithSignature("owner()"));
-        _assertSelectorUnavailable(abi.encodeWithSignature("grantRole(bytes32,address)", bytes32(0), ALICE));
-        _assertSelectorUnavailable(abi.encodeWithSignature("hasRole(bytes32,address)", bytes32(0), ALICE));
+        _assertSelectorUnavailable(
+            abi.encodeWithSignature("grantRole(bytes32,address)", bytes32(0), ALICE)
+        );
+        _assertSelectorUnavailable(
+            abi.encodeWithSignature("hasRole(bytes32,address)", bytes32(0), ALICE)
+        );
     }
 
-    function testFuzz_TransfersBetweenValidAddresses(uint256 firstAmount, uint256 secondAmount) public {
+    function testFuzz_TransfersBetweenValidAddresses(uint256 firstAmount, uint256 secondAmount)
+        public
+    {
         firstAmount = bound(firstAmount, 0, token.totalSupply());
 
         vm.prank(INITIAL_HOLDER);

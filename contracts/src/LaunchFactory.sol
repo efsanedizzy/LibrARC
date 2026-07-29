@@ -4,14 +4,14 @@ pragma solidity 0.8.26;
 import {
     AccessControlDefaultAdminRules
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {BondingCurveMath} from "./libraries/BondingCurveMath.sol";
-import {LaunchPool} from "./LaunchPool.sol";
-import {LibrARCToken} from "./LibrARCToken.sol";
+import { BondingCurveMath } from "./libraries/BondingCurveMath.sol";
+import { LaunchPool } from "./LaunchPool.sol";
+import { LibrARCToken } from "./LibrARCToken.sol";
 
 /// @title LaunchFactory
 /// @notice Permissionless factory for deploying fixed-supply LibrARC tokens and dedicated LaunchPools.
@@ -52,7 +52,9 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
     error FactoryTokenBalanceNotZero(uint256 remainingBalance);
     error InvalidPoolInitialization();
     error TokenTransferFailed();
-    error UnexpectedQuoteAssetBalanceIncrease(uint256 balanceBefore, uint256 balanceAfter, uint256 expectedIncrease);
+    error UnexpectedQuoteAssetBalanceIncrease(
+        uint256 balanceBefore, uint256 balanceAfter, uint256 expectedIncrease
+    );
     error FactoryQuoteAssetBalanceMismatch(uint256 expectedBalance, uint256 actualBalance);
     error FactoryAllowanceNotCleared(uint256 remainingAllowance);
     error UnknownLibrarcPool(address pool);
@@ -220,7 +222,11 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
     /// @return launchToken The deployed launch-token address.
     /// @return launchPool The deployed LaunchPool address.
     /// @return launchId The new monotonic launch identifier.
-    function createLaunch(string calldata name_, string calldata symbol_, string calldata metadataUri_)
+    function createLaunch(
+        string calldata name_,
+        string calldata symbol_,
+        string calldata metadataUri_
+    )
         external
         whenNotPaused
         nonReentrant
@@ -269,10 +275,13 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
 
         uint256 balanceAfterPull = quoteAssetToken.balanceOf(address(this));
         if (balanceAfterPull != balanceBefore + usdcAmountIn_) {
-            revert UnexpectedQuoteAssetBalanceIncrease(balanceBefore, balanceAfterPull, usdcAmountIn_);
+            revert UnexpectedQuoteAssetBalanceIncrease(
+                balanceBefore, balanceAfterPull, usdcAmountIn_
+            );
         }
 
-        (launchToken, launchPool, launchId) = _createLaunch(msg.sender, name_, symbol_, metadataUri_);
+        (launchToken, launchPool, launchId) =
+            _createLaunch(msg.sender, name_, symbol_, metadataUri_);
 
         quoteAssetToken.forceApprove(launchPool, usdcAmountIn_);
         tokenAmountOut = LaunchPool(payable(launchPool))
@@ -287,7 +296,9 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         uint256 remainingAllowance = quoteAssetToken.allowance(address(this), launchPool);
         if (remainingAllowance != 0) revert FactoryAllowanceNotCleared(remainingAllowance);
 
-        emit CreatorInitialPurchaseExecuted(launchId, msg.sender, recipient_, launchPool, usdcAmountIn_, tokenAmountOut);
+        emit CreatorInitialPurchaseExecuted(
+            launchId, msg.sender, recipient_, launchPool, usdcAmountIn_, tokenAmountOut
+        );
     }
 
     /// @notice Pauses new launch creation without affecting existing launch pools.
@@ -332,10 +343,12 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         revert NativeAssetNotAccepted();
     }
 
-    function _createLaunch(address creator_, string memory name_, string memory symbol_, string memory metadataUri_)
-        internal
-        returns (address launchToken, address launchPool, uint256 launchId)
-    {
+    function _createLaunch(
+        address creator_,
+        string memory name_,
+        string memory symbol_,
+        string memory metadataUri_
+    ) internal returns (address launchToken, address launchPool, uint256 launchId) {
         bytes memory metadataUriBytes = bytes(metadataUri_);
         bytes32 metadataHash = keccak256(metadataUriBytes);
 
@@ -372,28 +385,33 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         BondingCurveMath.CurveState memory state = poolInstance.curveState();
         if (
             uint256(poolInstance.status()) != uint256(LaunchPool.PoolStatus.Active)
-                || state.realTokenReserve != fixedSupply || state.realUsdcReserve != 0 || state.accruedProtocolFees != 0
+                || state.realTokenReserve != fixedSupply || state.realUsdcReserve != 0
+                || state.accruedProtocolFees != 0
         ) revert InvalidPoolInitialization();
 
         launchToken = address(tokenInstance);
         launchPool = address(poolInstance);
         launchId = launchCount + 1;
 
-        launchById[launchId] =
-            LaunchRecord({creator: creator_, token: launchToken, pool: launchPool, metadataHash: metadataHash});
+        launchById[launchId] = LaunchRecord({
+            creator: creator_, token: launchToken, pool: launchPool, metadataHash: metadataHash
+        });
         poolByToken[launchToken] = launchPool;
         tokenByPool[launchPool] = launchToken;
         isLibrarcToken[launchToken] = true;
         isLibrarcPool[launchPool] = true;
         launchCount = launchId;
 
-        emit LaunchCreated(launchId, creator_, launchToken, launchPool, name_, symbol_, metadataUri_, metadataHash);
+        emit LaunchCreated(
+            launchId, creator_, launchToken, launchPool, name_, symbol_, metadataUri_, metadataHash
+        );
     }
 
-    function _validateLaunchParameters(string memory name_, string memory symbol_, string memory metadataUri_)
-        internal
-        view
-    {
+    function _validateLaunchParameters(
+        string memory name_,
+        string memory symbol_,
+        string memory metadataUri_
+    ) internal view {
         if (bytes(name_).length == 0) {
             revert LibrARCToken.LibrARCTokenEmptyName();
         }

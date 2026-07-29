@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {StdInvariant} from "forge-std/StdInvariant.sol";
-import {Test} from "forge-std/Test.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { StdInvariant } from "forge-std/StdInvariant.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {LaunchFactory} from "../../src/LaunchFactory.sol";
-import {LaunchPool} from "../../src/LaunchPool.sol";
-import {LibrARCToken} from "../../src/LibrARCToken.sol";
-import {BondingCurveMath} from "../../src/libraries/BondingCurveMath.sol";
-import {MockLiquidityAdapter} from "../mocks/MockLiquidityAdapter.sol";
-import {LaunchPoolHandler} from "./LaunchPoolHandler.t.sol";
+import { LaunchFactory } from "../../src/LaunchFactory.sol";
+import { LaunchPool } from "../../src/LaunchPool.sol";
+import { LibrARCToken } from "../../src/LibrARCToken.sol";
+import { BondingCurveMath } from "../../src/libraries/BondingCurveMath.sol";
+import { MockLiquidityAdapter } from "../mocks/MockLiquidityAdapter.sol";
+import { LaunchPoolHandler } from "./LaunchPoolHandler.t.sol";
 
 contract LaunchPoolInvariant is StdInvariant, Test {
     uint8 internal constant STATUS_ACTIVE = 1;
@@ -45,11 +45,11 @@ contract LaunchPoolInvariant is StdInvariant, Test {
         selectors[8] = LaunchPoolHandler.unpauseAllTrading.selector;
 
         targetContract(address(handler));
-        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+        targetSelector(FuzzSelector({ addr: address(handler), selectors: selectors }));
 
         bytes4[] memory graduationSelector = new bytes4[](1);
         graduationSelector[0] = LaunchPoolHandler.graduate.selector;
-        targetSelector(FuzzSelector({addr: address(handler), selectors: graduationSelector}));
+        targetSelector(FuzzSelector({ addr: address(handler), selectors: graduationSelector }));
     }
 
     function invariant_TokenSupplyAlwaysMatchesFixedSupply() external view {
@@ -83,7 +83,9 @@ contract LaunchPoolInvariant is StdInvariant, Test {
     function invariant_ActualBalancesAlwaysCoverAccountedReserves() external view {
         BondingCurveMath.CurveState memory state = pool.curveState();
 
-        assertGe(quoteAsset.balanceOf(address(pool)), state.realUsdcReserve + state.accruedProtocolFees);
+        assertGe(
+            quoteAsset.balanceOf(address(pool)), state.realUsdcReserve + state.accruedProtocolFees
+        );
         assertGe(token.balanceOf(address(pool)), state.realTokenReserve);
     }
 
@@ -94,11 +96,15 @@ contract LaunchPoolInvariant is StdInvariant, Test {
             quoteAsset.balanceOf(address(pool)),
             state.realUsdcReserve + state.accruedProtocolFees + handler.totalQuoteDonations()
         );
-        assertEq(token.balanceOf(address(pool)), state.realTokenReserve + handler.totalTokenDonations());
+        assertEq(
+            token.balanceOf(address(pool)), state.realTokenReserve + handler.totalTokenDonations()
+        );
     }
 
     function invariant_FeeVaultBalanceMatchesSweptProtocolFees() external view {
-        assertEq(quoteAsset.balanceOf(address(handler.getFeeVault())), handler.totalProtocolFeesSwept());
+        assertEq(
+            quoteAsset.balanceOf(address(handler.getFeeVault())), handler.totalProtocolFeesSwept()
+        );
     }
 
     function invariant_DonationsRemainIsolatedFromAccountingAndLifecycle() external view {
@@ -106,10 +112,13 @@ contract LaunchPoolInvariant is StdInvariant, Test {
 
         assertFalse(handler.donationAccountingViolation());
         assertEq(
-            quoteAsset.balanceOf(address(pool)) - (state.realUsdcReserve + state.accruedProtocolFees),
+            quoteAsset.balanceOf(address(pool))
+                - (state.realUsdcReserve + state.accruedProtocolFees),
             handler.totalQuoteDonations()
         );
-        assertEq(token.balanceOf(address(pool)) - state.realTokenReserve, handler.totalTokenDonations());
+        assertEq(
+            token.balanceOf(address(pool)) - state.realTokenReserve, handler.totalTokenDonations()
+        );
 
         if (uint8(pool.status()) == STATUS_GRADUATION_PENDING) {
             assertEq(state.realUsdcReserve, pool.graduationThreshold());
@@ -121,7 +130,9 @@ contract LaunchPoolInvariant is StdInvariant, Test {
         uint8 status = uint8(pool.status());
 
         assertFalse(handler.pauseAccountingViolation());
-        assertEq(pool.canBuy(), status == STATUS_ACTIVE && !pool.buysPaused() && !pool.allTradingPaused());
+        assertEq(
+            pool.canBuy(), status == STATUS_ACTIVE && !pool.buysPaused() && !pool.allTradingPaused()
+        );
         assertEq(pool.canSell(), status == STATUS_ACTIVE && !pool.allTradingPaused());
 
         // Pauses must never rewrite reserves, so current state must still match ghost accounting.
@@ -149,7 +160,9 @@ contract LaunchPoolInvariant is StdInvariant, Test {
             assertTrue(handler.lastSuccessfulMigrationId() != bytes32(0));
             assertEq(liquidityAdapter.lastQuoteAssetAmount(), handler.migratedRealUsdcReserve());
             assertEq(liquidityAdapter.lastLaunchTokenAmount(), handler.migratedRealTokenReserve());
-            assertEq(quoteAsset.balanceOf(address(liquidityAdapter)), handler.migratedRealUsdcReserve());
+            assertEq(
+                quoteAsset.balanceOf(address(liquidityAdapter)), handler.migratedRealUsdcReserve()
+            );
             assertEq(token.balanceOf(address(liquidityAdapter)), handler.migratedRealTokenReserve());
             assertEq(pool.launchToken().allowance(address(pool), address(liquidityAdapter)), 0);
             assertEq(pool.quoteAsset().allowance(address(pool), address(liquidityAdapter)), 0);
@@ -179,7 +192,9 @@ contract LaunchPoolInvariant is StdInvariant, Test {
         BondingCurveMath.CurveState memory state = pool.curveState();
 
         assertFalse(handler.feeSweepAccountingViolation());
-        assertEq(quoteAsset.balanceOf(address(handler.getFeeVault())), handler.totalProtocolFeesSwept());
+        assertEq(
+            quoteAsset.balanceOf(address(handler.getFeeVault())), handler.totalProtocolFeesSwept()
+        );
         assertGe(quoteAsset.balanceOf(address(pool)), state.realUsdcReserve);
     }
 
@@ -202,8 +217,10 @@ contract LaunchPoolInvariant is StdInvariant, Test {
 
         uint256 buyProbeAmount = _currentValidBuyProbe();
         if (buyProbeAmount != 0) {
-            (BondingCurveMath.BuyQuote memory firstBuyQuote, bool firstBuyReaches) = pool.quoteBuy(buyProbeAmount);
-            (BondingCurveMath.BuyQuote memory secondBuyQuote, bool secondBuyReaches) = pool.quoteBuy(buyProbeAmount);
+            (BondingCurveMath.BuyQuote memory firstBuyQuote, bool firstBuyReaches) =
+                pool.quoteBuy(buyProbeAmount);
+            (BondingCurveMath.BuyQuote memory secondBuyQuote, bool secondBuyReaches) =
+                pool.quoteBuy(buyProbeAmount);
 
             assertEq(
                 keccak256(abi.encode(firstBuyQuote, firstBuyReaches)),
@@ -243,18 +260,25 @@ contract LaunchPoolInvariant is StdInvariant, Test {
 
             try pool.quoteBuy(candidates[i]) returns (BondingCurveMath.BuyQuote memory, bool) {
                 return candidates[i];
-            } catch {}
+            } catch { }
         }
     }
 
     function _currentValidSellProbe() internal view returns (uint256 probeAmount) {
-        uint256[7] memory candidates =
-            [uint256(1 ether), uint256(10 ether), 100 ether, 1000 ether, 10_000 ether, 100_000 ether, 1_000_000 ether];
+        uint256[7] memory candidates = [
+            uint256(1 ether),
+            uint256(10 ether),
+            100 ether,
+            1000 ether,
+            10_000 ether,
+            100_000 ether,
+            1_000_000 ether
+        ];
 
         for (uint256 i = 0; i < candidates.length; ++i) {
             try pool.quoteSell(candidates[i]) returns (BondingCurveMath.SellQuote memory) {
                 return candidates[i];
-            } catch {}
+            } catch { }
         }
     }
 

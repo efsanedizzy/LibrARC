@@ -4,9 +4,9 @@ pragma solidity 0.8.26;
 import {
     AccessControlDefaultAdminRules
 } from "@openzeppelin/contracts/access/extensions/AccessControlDefaultAdminRules.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title FeeVault
 /// @notice Minimal protocol fee vault for holding ERC-20 protocol fees and forwarding withdrawals to treasury.
@@ -54,7 +54,11 @@ contract FeeVault is AccessControlDefaultAdminRules, ReentrancyGuard {
         emit TreasuryUpdated(previousTreasury, newTreasury);
     }
 
-    function withdrawToken(IERC20 token, uint256 amount) external onlyRole(WITHDRAWER_ROLE) nonReentrant {
+    function withdrawToken(IERC20 token, uint256 amount)
+        external
+        onlyRole(WITHDRAWER_ROLE)
+        nonReentrant
+    {
         if (address(token) == address(0)) revert FeeVaultInvalidToken();
         if (amount == 0) revert FeeVaultInvalidAmount();
 

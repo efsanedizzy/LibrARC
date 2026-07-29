@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Test} from "forge-std/Test.sol";
+import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {BondingCurveMath} from "../src/libraries/BondingCurveMath.sol";
-import {FeeVault} from "../src/FeeVault.sol";
-import {ILiquidityAdapter} from "../src/interfaces/ILiquidityAdapter.sol";
-import {LaunchPool} from "../src/LaunchPool.sol";
-import {LibrARCToken} from "../src/LibrARCToken.sol";
-import {MockLiquidityAdapter} from "./mocks/MockLiquidityAdapter.sol";
+import { BondingCurveMath } from "../src/libraries/BondingCurveMath.sol";
+import { FeeVault } from "../src/FeeVault.sol";
+import { ILiquidityAdapter } from "../src/interfaces/ILiquidityAdapter.sol";
+import { LaunchPool } from "../src/LaunchPool.sol";
+import { LibrARCToken } from "../src/LibrARCToken.sol";
+import { MockLiquidityAdapter } from "./mocks/MockLiquidityAdapter.sol";
 
 contract MockQuoteAsset is ERC20 {
-    constructor() ERC20("Arc USDC", "USDC") {}
+    constructor() ERC20("Arc USDC", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -66,7 +66,9 @@ contract MockConfigurableToken is ERC20 {
     bool private _failTransfer;
     bool private _failTransferFrom;
 
-    constructor(string memory name_, string memory symbol_, uint8 tokenDecimals_) ERC20(name_, symbol_) {
+    constructor(string memory name_, string memory symbol_, uint8 tokenDecimals_)
+        ERC20(name_, symbol_)
+    {
         _tokenDecimals = tokenDecimals_;
     }
 
@@ -169,8 +171,8 @@ contract ScenarioLiquidityAdapter is ILiquidityAdapter {
         }
 
         if (
-            mode == Mode.Exact || mode == Mode.ReturnZero || mode == Mode.LaunchOnly || mode == Mode.PartialLaunch
-                || mode == Mode.PartialQuote
+            mode == Mode.Exact || mode == Mode.ReturnZero || mode == Mode.LaunchOnly
+                || mode == Mode.PartialLaunch || mode == Mode.PartialQuote
         ) {
             uint256 launchTransferAmount = launchTokenAmount;
             if (mode == Mode.PartialLaunch) {
@@ -179,7 +181,10 @@ contract ScenarioLiquidityAdapter is ILiquidityAdapter {
             IERC20(launchToken).safeTransferFrom(msg.sender, address(this), launchTransferAmount);
         }
 
-        if (mode == Mode.Exact || mode == Mode.ReturnZero || mode == Mode.QuoteOnly || mode == Mode.PartialQuote) {
+        if (
+            mode == Mode.Exact || mode == Mode.ReturnZero || mode == Mode.QuoteOnly
+                || mode == Mode.PartialQuote
+        ) {
             uint256 quoteTransferAmount = quoteAssetAmount;
             if (mode == Mode.PartialQuote) {
                 quoteTransferAmount = quoteAssetAmount - 1;
@@ -193,7 +198,13 @@ contract ScenarioLiquidityAdapter is ILiquidityAdapter {
 
         migrationId = keccak256(
             abi.encode(
-                mode, msg.sender, launchToken, quoteAsset, launchTokenAmount, quoteAssetAmount, liquidityRecipient
+                mode,
+                msg.sender,
+                launchToken,
+                quoteAsset,
+                launchTokenAmount,
+                quoteAssetAmount,
+                liquidityRecipient
             )
         );
     }
@@ -228,7 +239,7 @@ contract LaunchPoolHarness is LaunchPool {
             sellFeeBps_,
             graduationThreshold_
         )
-    {}
+    { }
 
     function exposedSetAccountedState(
         uint256 realUsdcReserve_,
@@ -245,7 +256,10 @@ contract LaunchPoolHarness is LaunchPool {
 
 contract LaunchPoolTest is Test, IERC20Errors {
     event PoolInitialized(
-        address indexed launchToken, uint256 totalTokenSupply, uint256 virtualUsdcReserve, uint256 virtualTokenReserve
+        address indexed launchToken,
+        uint256 totalTokenSupply,
+        uint256 virtualUsdcReserve,
+        uint256 virtualTokenReserve
     );
     event BuyExecuted(
         address indexed buyer,
@@ -634,7 +648,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
         _fundPoolExact(pool, token);
 
         vm.prank(OTHER_ACCOUNT);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, OTHER_ACCOUNT, address(this)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.UnauthorizedFactory.selector, OTHER_ACCOUNT, address(this)
+            )
+        );
         pool.initialize();
     }
 
@@ -642,7 +660,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.InsufficientTokenFunding.selector, uint256(0), token.FIXED_SUPPLY())
+            abi.encodeWithSelector(
+                LaunchPool.InsufficientTokenFunding.selector, uint256(0), token.FIXED_SUPPLY()
+            )
         );
         pool.initialize();
     }
@@ -663,7 +683,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertTrue(token.transfer(address(pool), token.FIXED_SUPPLY()));
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.InvalidTokenTotalSupply.selector, token.FIXED_SUPPLY(), expectedSupply)
+            abi.encodeWithSelector(
+                LaunchPool.InvalidTokenTotalSupply.selector, token.FIXED_SUPPLY(), expectedSupply
+            )
         );
         pool.initialize();
     }
@@ -722,7 +744,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.expectEmit(true, false, false, true, address(pool));
         emit PoolInitialized(
-            address(token), token.FIXED_SUPPLY(), DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE
+            address(token),
+            token.FIXED_SUPPLY(),
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE
         );
         pool.initialize();
     }
@@ -733,7 +758,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.PoolAlreadyInitialized.selector, LaunchPool.PoolStatus.Active)
+            abi.encodeWithSelector(
+                LaunchPool.PoolAlreadyInitialized.selector, LaunchPool.PoolStatus.Active
+            )
         );
         pool.initialize();
     }
@@ -775,7 +802,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchPool.InvalidTokenTotalSupply.selector, token.FIXED_SUPPLY(), token.FIXED_SUPPLY() - 1
+                LaunchPool.InvalidTokenTotalSupply.selector,
+                token.FIXED_SUPPLY(),
+                token.FIXED_SUPPLY() - 1
             )
         );
         pool.initialize();
@@ -790,7 +819,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
     function test_QuoteBuyBeforeInitializationReverts() public {
         (LaunchPoolHarness pool,) = _deployDefaultPool();
 
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized
+            )
+        );
         pool.quoteBuy(1);
     }
 
@@ -799,7 +832,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         _fundPoolExact(pool, token);
         pool.initialize();
 
-        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) = pool.quoteBuy(10_000);
+        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) =
+            pool.quoteBuy(10_000);
 
         assertEq(quote.fee, 250);
         assertEq(quote.netUsdcIn, 9750);
@@ -822,20 +856,23 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_EqualityWithGraduationThresholdSucceeds() public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 1000);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 1000
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
-        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) = pool.quoteBuy(1000);
+        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) =
+            pool.quoteBuy(1000);
 
         assertEq(quote.nextState.realUsdcReserve, 1000);
         assertTrue(reachesGraduationThreshold);
     }
 
     function test_EqualityReturnsReachesGraduationThresholdTrue() public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 777);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 777
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
@@ -845,32 +882,38 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_ReserveValueBelowThresholdReturnsFalse() public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 1001);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 1001
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
-        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) = pool.quoteBuy(1000);
+        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) =
+            pool.quoteBuy(1000);
 
         assertEq(quote.nextState.realUsdcReserve, 1000);
         assertFalse(reachesGraduationThreshold);
     }
 
     function test_ReserveValueAboveThresholdReverts() public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999)
+            abi.encodeWithSelector(
+                LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999
+            )
         );
         pool.quoteBuy(1000);
     }
 
     function test_AccruedProtocolFeesAreExcludedFromGraduationCapacity() public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 200);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 200
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
@@ -878,7 +921,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         assertEq(pool.remainingGraduationCapacity(), 150);
 
-        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) = pool.quoteBuy(150);
+        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) =
+            pool.quoteBuy(150);
 
         assertEq(quote.nextState.realUsdcReserve, 200);
         assertTrue(reachesGraduationThreshold);
@@ -912,7 +956,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
     function test_QuoteSellBeforeInitializationReverts() public {
         (LaunchPoolHarness pool,) = _deployDefaultPool();
 
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized
+            )
+        );
         pool.quoteSell(1);
     }
 
@@ -929,7 +977,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         pool.exposedSetAccountedState(
-            SELL_TEST_REAL_USDC_RESERVE, SELL_TEST_REAL_TOKEN_RESERVE, 0, LaunchPool.PoolStatus.Active
+            SELL_TEST_REAL_USDC_RESERVE,
+            SELL_TEST_REAL_TOKEN_RESERVE,
+            0,
+            LaunchPool.PoolStatus.Active
         );
 
         BondingCurveMath.SellQuote memory quote = pool.quoteSell(2 ether);
@@ -951,7 +1002,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         pool.exposedSetAccountedState(
-            SELL_TEST_REAL_USDC_RESERVE, SELL_TEST_REAL_TOKEN_RESERVE, 0, LaunchPool.PoolStatus.Active
+            SELL_TEST_REAL_USDC_RESERVE,
+            SELL_TEST_REAL_TOKEN_RESERVE,
+            0,
+            LaunchPool.PoolStatus.Active
         );
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
         uint256 statusBefore = uint256(pool.status());
@@ -968,7 +1022,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         _fundPoolExact(pool, token);
         pool.initialize();
 
-        pool.exposedSetAccountedState(0, token.FIXED_SUPPLY() - 1 ether, 0, LaunchPool.PoolStatus.Active);
+        pool.exposedSetAccountedState(
+            0, token.FIXED_SUPPLY() - 1 ether, 0, LaunchPool.PoolStatus.Active
+        );
 
         vm.expectRevert();
         pool.quoteSell(1 ether);
@@ -1097,7 +1153,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertFalse(pool.canSell());
 
         pool.exposedSetAccountedState(
-            state.realUsdcReserve, state.realTokenReserve, state.accruedProtocolFees, LaunchPool.PoolStatus.Graduated
+            state.realUsdcReserve,
+            state.realTokenReserve,
+            state.accruedProtocolFees,
+            LaunchPool.PoolStatus.Graduated
         );
         assertFalse(pool.canBuy());
         assertFalse(pool.canSell());
@@ -1155,7 +1214,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, ALICE, address(this)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, ALICE, address(this))
+        );
         pool.setBuysPaused(true);
     }
 
@@ -1165,7 +1226,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         vm.prank(BOB);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, BOB, address(this)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, BOB, address(this))
+        );
         pool.setAllTradingPaused(true);
     }
 
@@ -1193,8 +1256,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
-        uint256 purchasedTokens =
-            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+        uint256 purchasedTokens = _buyFromPool(
+            pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE
+        );
 
         uint256 sellAmountIn = purchasedTokens / 3;
         (BondingCurveMath.BuyQuote memory buyQuoteBeforePause, bool reachesThresholdBeforePause) =
@@ -1231,7 +1295,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         quoteAsset.mint(address(this), nextBuyAmount);
         quoteAsset.approve(address(pool), nextBuyAmount);
         vm.expectRevert(LaunchPool.BuysPaused.selector);
-        pool.buyForFactory(CAROL, nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, CAROL);
+        pool.buyForFactory(
+            CAROL, nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, CAROL
+        );
 
         _assertPoolStateAndBalancesUnchanged(
             pool,
@@ -1245,18 +1311,22 @@ contract LaunchPoolTest is Test, IERC20Errors {
         token.approve(address(pool), sellAmountIn);
 
         vm.prank(ALICE);
-        uint256 usdcAmountOut = pool.sell(sellAmountIn, sellQuoteBeforePause.netUsdcAmountOut, block.timestamp, ALICE);
+        uint256 usdcAmountOut =
+            pool.sell(sellAmountIn, sellQuoteBeforePause.netUsdcAmountOut, block.timestamp, ALICE);
         assertEq(usdcAmountOut, sellQuoteBeforePause.netUsdcAmountOut);
 
         pool.setBuysPaused(false);
 
         (BondingCurveMath.BuyQuote memory buyQuoteAfterUnpause,) = pool.quoteBuy(nextBuyAmount);
-        uint256 tokenAmountOut =
-            _buyFromPool(pool, BOB, nextBuyAmount, buyQuoteAfterUnpause.tokenAmountOut, block.timestamp, BOB);
+        uint256 tokenAmountOut = _buyFromPool(
+            pool, BOB, nextBuyAmount, buyQuoteAfterUnpause.tokenAmountOut, block.timestamp, BOB
+        );
         assertEq(tokenAmountOut, buyQuoteAfterUnpause.tokenAmountOut);
     }
 
-    function test_AllTradingPausedBlocksTradeExecutionButLeavesQuotesAndAccountingAvailable() public {
+    function test_AllTradingPausedBlocksTradeExecutionButLeavesQuotesAndAccountingAvailable()
+        public
+    {
         uint256 initialBuyAmount = 100_000;
         uint256 nextBuyAmount = 45_000;
         (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
@@ -1264,8 +1334,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
-        uint256 purchasedTokens =
-            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+        uint256 purchasedTokens = _buyFromPool(
+            pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE
+        );
 
         uint256 sellAmountIn = purchasedTokens / 4;
         (BondingCurveMath.BuyQuote memory buyQuoteBeforePause, bool reachesThresholdBeforePause) =
@@ -1302,7 +1373,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         quoteAsset.mint(address(this), nextBuyAmount);
         quoteAsset.approve(address(pool), nextBuyAmount);
         vm.expectRevert(LaunchPool.AllTradingPaused.selector);
-        pool.buyForFactory(CAROL, nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, CAROL);
+        pool.buyForFactory(
+            CAROL, nextBuyAmount, buyQuoteBeforePause.tokenAmountOut, block.timestamp, CAROL
+        );
 
         vm.prank(ALICE);
         token.approve(address(pool), sellAmountIn);
@@ -1322,7 +1395,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.setAllTradingPaused(false);
 
         vm.prank(ALICE);
-        uint256 usdcAmountOut = pool.sell(sellAmountIn, sellQuoteBeforePause.netUsdcAmountOut, block.timestamp, ALICE);
+        uint256 usdcAmountOut =
+            pool.sell(sellAmountIn, sellQuoteBeforePause.netUsdcAmountOut, block.timestamp, ALICE);
         assertEq(usdcAmountOut, sellQuoteBeforePause.netUsdcAmountOut);
     }
 
@@ -1334,8 +1408,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
-        uint256 purchasedTokens =
-            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+        uint256 purchasedTokens = _buyFromPool(
+            pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE
+        );
         uint256 sellAmountIn = purchasedTokens / 5;
 
         pool.setBuysPaused(true);
@@ -1363,7 +1438,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         token.approve(address(pool), sellAmountIn);
 
         vm.prank(ALICE);
-        uint256 usdcAmountOut = pool.sell(sellAmountIn, sellQuote.netUsdcAmountOut, block.timestamp, ALICE);
+        uint256 usdcAmountOut =
+            pool.sell(sellAmountIn, sellQuote.netUsdcAmountOut, block.timestamp, ALICE);
         assertEq(usdcAmountOut, sellQuote.netUsdcAmountOut);
     }
 
@@ -1376,7 +1452,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         _fundPoolExact(pool, token);
         pool.initialize();
 
-        pool.exposedSetAccountedState(123, token.FIXED_SUPPLY() - 1 ether, 0, LaunchPool.PoolStatus.GraduationPending);
+        pool.exposedSetAccountedState(
+            123, token.FIXED_SUPPLY() - 1 ether, 0, LaunchPool.PoolStatus.GraduationPending
+        );
         vm.expectRevert(LaunchPool.PauseChangeNotAllowed.selector);
         pool.setBuysPaused(true);
 
@@ -1393,7 +1471,12 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 realTokenReserve = tokenSupply() - 3 ether;
         uint256 accruedProtocolFees = 456;
         (LaunchPoolHarness pool,) = _prepareSweepFixture(
-            realUsdcReserve, realTokenReserve, accruedProtocolFees, 0, 12, LaunchPool.PoolStatus.Active
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            0,
+            12,
+            LaunchPool.PoolStatus.Active
         );
 
         pool.setBuysPaused(true);
@@ -1413,7 +1496,7 @@ contract LaunchPoolTest is Test, IERC20Errors {
         (LaunchPoolHarness pool,) = _deployDefaultPool();
         vm.deal(address(this), 1 ether);
 
-        (bool success, bytes memory data) = address(pool).call{value: 1}("");
+        (bool success, bytes memory data) = address(pool).call{ value: 1 }("");
 
         assertFalse(success);
         assertEq(_revertSelector(data), LaunchPool.NativeAssetNotAccepted.selector);
@@ -1432,14 +1515,16 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
     function test_BuyExecutesSuccessfulZeroFeeTradeAndUpdatesAccounting() public {
         uint256 buyAmountIn = 100_000;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 1_000_000_000);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 1_000_000_000
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
         (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
 
-        uint256 tokenAmountOut = _buyFromPool(pool, ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, ALICE);
+        uint256 tokenAmountOut =
+            _buyFromPool(pool, ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, ALICE);
 
         assertEq(tokenAmountOut, quote.tokenAmountOut);
         assertEq(token.balanceOf(ALICE), quote.tokenAmountOut);
@@ -1492,7 +1577,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(buyAmountIn);
 
-        uint256 tokenAmountOut = _buyFromPool(pool, ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, CAROL);
+        uint256 tokenAmountOut =
+            _buyFromPool(pool, ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, CAROL);
 
         assertEq(tokenAmountOut, quote.tokenAmountOut);
         assertEq(token.balanceOf(CAROL), quote.tokenAmountOut);
@@ -1506,7 +1592,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         vm.prank(OTHER_ACCOUNT);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, OTHER_ACCOUNT, address(this)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.UnauthorizedFactory.selector, OTHER_ACCOUNT, address(this)
+            )
+        );
         pool.buyForFactory(ALICE, 1, 0, block.timestamp, ALICE);
     }
 
@@ -1535,7 +1625,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
             quote.nextState.realTokenReserve
         );
 
-        uint256 tokenAmountOut = pool.buyForFactory(ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, CAROL);
+        uint256 tokenAmountOut =
+            pool.buyForFactory(ALICE, buyAmountIn, quote.tokenAmountOut, block.timestamp, CAROL);
 
         assertEq(tokenAmountOut, quote.tokenAmountOut);
         assertEq(quoteAsset.balanceOf(address(this)), factoryQuoteBefore);
@@ -1557,10 +1648,12 @@ contract LaunchPoolTest is Test, IERC20Errors {
         publicPool.initialize();
 
         (BondingCurveMath.BuyQuote memory expectedQuote,) = factoryPool.quoteBuy(buyAmountIn);
-        uint256 factoryTokenAmountOut =
-            _buyFromFactory(factoryPool, ALICE, buyAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CAROL);
-        uint256 publicTokenAmountOut =
-            _buyFromPool(publicPool, ALICE, buyAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CAROL);
+        uint256 factoryTokenAmountOut = _buyFromFactory(
+            factoryPool, ALICE, buyAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CAROL
+        );
+        uint256 publicTokenAmountOut = _buyFromPool(
+            publicPool, ALICE, buyAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CAROL
+        );
 
         assertEq(factoryTokenAmountOut, expectedQuote.tokenAmountOut);
         assertEq(publicTokenAmountOut, expectedQuote.tokenAmountOut);
@@ -1618,7 +1711,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.warp(100);
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(100), uint256(99)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(100), uint256(99))
+        );
         pool.buy(1, 0, 99, ALICE);
     }
 
@@ -1630,7 +1725,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         quoteAsset.approve(address(pool), 1);
 
         vm.warp(100);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(100), uint256(99)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(100), uint256(99))
+        );
         pool.buyForFactory(ALICE, 1, 0, 99, ALICE);
     }
 
@@ -1650,7 +1747,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.prank(ALICE);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchPool.InsufficientTokenOutput.selector, quote.tokenAmountOut + 1, quote.tokenAmountOut
+                LaunchPool.InsufficientTokenOutput.selector,
+                quote.tokenAmountOut + 1,
+                quote.tokenAmountOut
             )
         );
         pool.buy(buyAmountIn, quote.tokenAmountOut + 1, block.timestamp, ALICE);
@@ -1678,7 +1777,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchPool.InsufficientTokenOutput.selector, quote.tokenAmountOut + 1, quote.tokenAmountOut
+                LaunchPool.InsufficientTokenOutput.selector,
+                quote.tokenAmountOut + 1,
+                quote.tokenAmountOut
             )
         );
         pool.buyForFactory(ALICE, buyAmountIn, quote.tokenAmountOut + 1, block.timestamp, CAROL);
@@ -1699,7 +1800,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.prank(ALICE);
         vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 0, buyAmountIn)
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 0, buyAmountIn
+            )
         );
         pool.buy(buyAmountIn, 0, block.timestamp, ALICE);
     }
@@ -1715,19 +1818,23 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.prank(ALICE);
         vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, ALICE, uint256(0), buyAmountIn)
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, ALICE, uint256(0), buyAmountIn
+            )
         );
         pool.buy(buyAmountIn, 0, block.timestamp, ALICE);
     }
 
     function test_BuyThresholdEqualitySucceedsAndEntersGraduationPending() public {
         uint256 threshold = 1000;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
-        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) = pool.quoteBuy(threshold);
+        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) =
+            pool.quoteBuy(threshold);
         assertTrue(reachesGraduationThreshold);
 
         _mintAndApproveQuoteAsset(ALICE, threshold, pool);
@@ -1756,8 +1863,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_BuyThresholdOvershootRevertsWithoutMutation() public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
@@ -1770,7 +1878,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.prank(ALICE);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999)
+            abi.encodeWithSelector(
+                LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999
+            )
         );
         pool.buy(1000, 1, block.timestamp, ALICE);
 
@@ -1783,8 +1893,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_BuyForFactoryThresholdOvershootRevertsWithoutMutation() public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, 999
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
@@ -1797,7 +1908,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         quoteAsset.approve(address(pool), 1000);
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999)
+            abi.encodeWithSelector(
+                LaunchPool.GraduationThresholdExceeded.selector, uint256(0), uint256(1000), 999
+            )
         );
         pool.buyForFactory(ALICE, 1000, 1, block.timestamp, CAROL);
 
@@ -1813,28 +1926,41 @@ contract LaunchPoolTest is Test, IERC20Errors {
         (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized
+            )
+        );
         pool.buy(1, 0, block.timestamp, ALICE);
 
         _fundPoolExact(pool, token);
         pool.initialize();
-        pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.GraduationPending);
+        pool.exposedSetAccountedState(
+            0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.GraduationPending
+        );
 
         vm.prank(ALICE);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.GraduationPending)
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.GraduationPending
+            )
         );
         pool.buy(1, 0, block.timestamp, ALICE);
 
         pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.Graduated);
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated
+            )
+        );
         pool.buy(1, 0, block.timestamp, ALICE);
     }
 
     function test_SellExecutesSuccessfulZeroFeeTradeAndUpdatesAccounting() public {
-        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) =
+            _prepareSellFixture(0, 0, 100_000);
         uint256 sellAmount = boughtTokens / 2;
         BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmount);
 
@@ -1842,7 +1968,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         token.approve(address(pool), sellAmount);
 
         vm.prank(ALICE);
-        uint256 netUsdcAmountOut = pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, ALICE);
+        uint256 netUsdcAmountOut =
+            pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, ALICE);
 
         assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
         assertEq(netUsdcAmountOut, quote.grossUsdcAmountOut);
@@ -1876,7 +2003,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
 
         vm.prank(ALICE);
-        uint256 netUsdcAmountOut = pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, ALICE);
+        uint256 netUsdcAmountOut =
+            pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, ALICE);
 
         assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
         assertEq(quoteAsset.balanceOf(ALICE), netUsdcAmountOut);
@@ -1886,7 +2014,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_SellSupportsAlternateRecipient() public {
-        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) =
+            _prepareSellFixture(0, 0, 100_000);
         uint256 sellAmount = boughtTokens / 2;
         BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmount);
 
@@ -1894,7 +2023,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         token.approve(address(pool), sellAmount);
 
         vm.prank(ALICE);
-        uint256 netUsdcAmountOut = pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, CAROL);
+        uint256 netUsdcAmountOut =
+            pool.sell(sellAmount, quote.netUsdcAmountOut, block.timestamp, CAROL);
 
         assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
         assertEq(quoteAsset.balanceOf(CAROL), netUsdcAmountOut);
@@ -1902,7 +2032,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_SellZeroRecipientReverts() public {
-        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) =
+            _prepareSellFixture(0, 0, 100_000);
 
         vm.prank(ALICE);
         token.approve(address(pool), boughtTokens);
@@ -1921,19 +2052,23 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_SellExpiredDeadlineReverts() public {
-        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) =
+            _prepareSellFixture(0, 0, 100_000);
 
         vm.prank(ALICE);
         token.approve(address(pool), boughtTokens);
 
         vm.warp(200);
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(200), uint256(199)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.ExpiredDeadline.selector, uint256(200), uint256(199))
+        );
         pool.sell(boughtTokens, 0, 199, ALICE);
     }
 
     function test_SellSlippageFailureRevertsWithoutStateChanges() public {
-        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) =
+            _prepareSellFixture(0, 0, 100_000);
         uint256 sellAmount = boughtTokens / 2;
         BondingCurveMath.SellQuote memory quote = pool.quoteSell(sellAmount);
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
@@ -1947,7 +2082,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.prank(ALICE);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchPool.InsufficientUsdcOutput.selector, quote.netUsdcAmountOut + 1, quote.netUsdcAmountOut
+                LaunchPool.InsufficientUsdcOutput.selector,
+                quote.netUsdcAmountOut + 1,
+                quote.netUsdcAmountOut
             )
         );
         pool.sell(sellAmount, quote.netUsdcAmountOut + 1, block.timestamp, ALICE);
@@ -1964,13 +2101,16 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.prank(ALICE);
         vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 0, boughtTokens)
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientAllowance.selector, address(pool), 0, boughtTokens
+            )
         );
         pool.sell(boughtTokens, 0, block.timestamp, ALICE);
     }
 
     function test_SellInsufficientTokenBalanceReverts() public {
-        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) = _prepareSellFixture(0, 0, 100_000);
+        (LaunchPoolHarness pool, LibrARCToken token, uint256 boughtTokens) =
+            _prepareSellFixture(0, 0, 100_000);
         uint256 transferredAway = boughtTokens / 2;
 
         vm.prank(ALICE);
@@ -1982,7 +2122,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.prank(ALICE);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IERC20Errors.ERC20InsufficientBalance.selector, ALICE, boughtTokens - transferredAway, boughtTokens
+                IERC20Errors.ERC20InsufficientBalance.selector,
+                ALICE,
+                boughtTokens - transferredAway,
+                boughtTokens
             )
         );
         pool.sell(boughtTokens, 0, block.timestamp, ALICE);
@@ -1991,8 +2134,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
     function test_SellInsufficientRealUsdcReserveReverts() public {
         uint256 totalSupply_ = 1_000_000 ether;
         uint256 traderTokenAmount = 2 ether;
-        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
-            _deployFailingPool(18, 6, totalSupply_);
+        (
+            LaunchPoolHarness pool,
+            MockConfigurableToken launchToken_,
+            MockConfigurableToken quoteToken_
+        ) = _deployFailingPool(18, 6, totalSupply_);
         _seedCustomSellState(pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 0, 0);
 
         vm.prank(ALICE);
@@ -2004,30 +2150,45 @@ contract LaunchPoolTest is Test, IERC20Errors {
         (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Uninitialized
+            )
+        );
         pool.sell(1, 0, block.timestamp, ALICE);
 
         _fundPoolExact(pool, token);
         pool.initialize();
-        pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.GraduationPending);
+        pool.exposedSetAccountedState(
+            0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.GraduationPending
+        );
 
         vm.prank(ALICE);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.GraduationPending)
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.GraduationPending
+            )
         );
         pool.sell(1, 0, block.timestamp, ALICE);
 
         pool.exposedSetAccountedState(0, token.FIXED_SUPPLY(), 0, LaunchPool.PoolStatus.Graduated);
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated
+            )
+        );
         pool.sell(1, 0, block.timestamp, ALICE);
     }
 
     function test_FailedUsdcTransferFromLeavesBuyStateUnchanged() public {
         uint256 totalSupply_ = 1_000_000 ether;
-        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
-            _deployFailingPool(18, 6, totalSupply_);
+        (
+            LaunchPoolHarness pool,
+            MockConfigurableToken launchToken_,
+            MockConfigurableToken quoteToken_
+        ) = _deployFailingPool(18, 6, totalSupply_);
         _fundCustomPoolExact(pool, launchToken_, totalSupply_);
         pool.initialize();
 
@@ -2054,8 +2215,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
     function test_FailedOutgoingTokenTransferLeavesBuyStateUnchanged() public {
         uint256 totalSupply_ = 1_000_000 ether;
-        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
-            _deployFailingPool(18, 6, totalSupply_);
+        (
+            LaunchPoolHarness pool,
+            MockConfigurableToken launchToken_,
+            MockConfigurableToken quoteToken_
+        ) = _deployFailingPool(18, 6, totalSupply_);
         _fundCustomPoolExact(pool, launchToken_, totalSupply_);
         pool.initialize();
 
@@ -2083,9 +2247,14 @@ contract LaunchPoolTest is Test, IERC20Errors {
     function test_FailedTokenTransferFromLeavesSellStateUnchanged() public {
         uint256 totalSupply_ = 1_000_000 ether;
         uint256 traderTokenAmount = 10_000 ether;
-        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
-            _deployFailingPool(18, 6, totalSupply_);
-        _seedCustomSellState(pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 500_000, 10_000);
+        (
+            LaunchPoolHarness pool,
+            MockConfigurableToken launchToken_,
+            MockConfigurableToken quoteToken_
+        ) = _deployFailingPool(18, 6, totalSupply_);
+        _seedCustomSellState(
+            pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 500_000, 10_000
+        );
         launchToken_.setFailTransferFrom(true);
 
         BondingCurveMath.SellQuote memory quote = pool.quoteSell(traderTokenAmount / 2);
@@ -2108,9 +2277,14 @@ contract LaunchPoolTest is Test, IERC20Errors {
     function test_FailedOutgoingUsdcTransferLeavesSellStateUnchanged() public {
         uint256 totalSupply_ = 1_000_000 ether;
         uint256 traderTokenAmount = 10_000 ether;
-        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
-            _deployFailingPool(18, 6, totalSupply_);
-        _seedCustomSellState(pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 500_000, 10_000);
+        (
+            LaunchPoolHarness pool,
+            MockConfigurableToken launchToken_,
+            MockConfigurableToken quoteToken_
+        ) = _deployFailingPool(18, 6, totalSupply_);
+        _seedCustomSellState(
+            pool, launchToken_, quoteToken_, totalSupply_, traderTokenAmount, 500_000, 10_000
+        );
         quoteToken_.setFailTransfer(true);
 
         BondingCurveMath.SellQuote memory quote = pool.quoteSell(traderTokenAmount / 2);
@@ -2157,7 +2331,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         (LaunchPoolHarness pool,) = _deployDefaultPool();
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Uninitialized)
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Uninitialized
+            )
         );
         pool.graduate();
     }
@@ -2168,21 +2344,25 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Active)
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Active
+            )
         );
         pool.graduate();
     }
 
     function test_GraduateZeroRealTokenReserveReverts() public {
-        (LaunchPoolHarness pool,) = _prepareGraduationFixture(address(liquidityAdapter), 10_000, 0, 0, 0, 0);
+        (LaunchPoolHarness pool,) =
+            _prepareGraduationFixture(address(liquidityAdapter), 10_000, 0, 0, 0, 0);
 
         vm.expectRevert(LaunchPool.ZeroGraduationTokenReserve.selector);
         pool.graduate();
     }
 
     function test_GraduateZeroRealUsdcReserveReverts() public {
-        (LaunchPoolHarness pool,) =
-            _prepareGraduationFixture(address(liquidityAdapter), 0, tokenSupply() - 1 ether, 0, 0, 0);
+        (LaunchPoolHarness pool,) = _prepareGraduationFixture(
+            address(liquidityAdapter), 0, tokenSupply() - 1 ether, 0, 0, 0
+        );
 
         vm.expectRevert(LaunchPool.ZeroGraduationUsdcReserve.selector);
         pool.graduate();
@@ -2197,7 +2377,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchPool.InsufficientLaunchTokenBalance.selector, token.FIXED_SUPPLY() - 1, token.FIXED_SUPPLY()
+                LaunchPool.InsufficientLaunchTokenBalance.selector,
+                token.FIXED_SUPPLY() - 1,
+                token.FIXED_SUPPLY()
             )
         );
         pool.graduate();
@@ -2207,7 +2389,12 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 realUsdcReserve = 1000;
         uint256 accruedProtocolFees = 50;
         (LaunchPoolHarness pool,) = _prepareGraduationFixture(
-            address(liquidityAdapter), realUsdcReserve, tokenSupply() - 1 ether, accruedProtocolFees, 0, 0
+            address(liquidityAdapter),
+            realUsdcReserve,
+            tokenSupply() - 1 ether,
+            accruedProtocolFees,
+            0,
+            0
         );
 
         vm.prank(address(pool));
@@ -2286,42 +2473,55 @@ contract LaunchPoolTest is Test, IERC20Errors {
     }
 
     function test_GraduateSecondAttemptReverts() public {
-        (LaunchPoolHarness pool,) =
-            _prepareGraduationFixture(address(liquidityAdapter), 10_000, tokenSupply() - 2 ether, 50, 1 ether, 10);
+        (LaunchPoolHarness pool,) = _prepareGraduationFixture(
+            address(liquidityAdapter), 10_000, tokenSupply() - 2 ether, 50, 1 ether, 10
+        );
 
         pool.graduate();
 
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Graduated)
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotGraduationPending.selector, LaunchPool.PoolStatus.Graduated
+            )
         );
         pool.graduate();
     }
 
     function test_BuyAndSellRemainDisabledAfterSuccessfulGraduation() public {
         uint256 realTokenReserve = tokenSupply() - 2 ether;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _prepareGraduationFixture(address(liquidityAdapter), 10_000, realTokenReserve, 25, 1 ether, 0);
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(liquidityAdapter), 10_000, realTokenReserve, 25, 1 ether, 0
+        );
 
         pool.graduate();
 
         _mintAndApproveQuoteAsset(ALICE, 1, pool);
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated
+            )
+        );
         pool.buy(1, 0, block.timestamp, ALICE);
 
         vm.prank(ALICE);
         token.approve(address(pool), 1);
 
         vm.prank(ALICE);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchPool.PoolNotActive.selector, LaunchPool.PoolStatus.Graduated
+            )
+        );
         pool.sell(1, 0, block.timestamp, ALICE);
     }
 
     function test_GraduateAdapterRevertRollsBackAndCanBeRetried() public {
         ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
         adapter.setMode(ScenarioLiquidityAdapter.Mode.RevertAlways);
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _prepareGraduationFixture(address(adapter), 10_000, tokenSupply() - 3 ether, 250, 1 ether, 50);
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(adapter), 10_000, tokenSupply() - 3 ether, 250, 1 ether, 50
+        );
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
         uint256 poolTokenBefore = token.balanceOf(address(pool));
         uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
@@ -2329,7 +2529,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.expectRevert(ScenarioLiquidityAdapter.ScenarioLiquidityAdapterForcedRevert.selector);
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
 
         adapter.setMode(ScenarioLiquidityAdapter.Mode.Exact);
         bytes32 migrationId = pool.graduate();
@@ -2350,7 +2552,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.expectRevert(LaunchPool.ZeroMigrationId.selector);
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
     function test_GraduateNoAssetPullRevertsAndRollsBack() public {
@@ -2373,7 +2577,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
     function test_GraduatePartialLaunchPullRevertsAndRollsBack() public {
@@ -2395,15 +2601,18 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
     function test_GraduatePartialQuotePullRevertsAndRollsBack() public {
         ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
         adapter.setMode(ScenarioLiquidityAdapter.Mode.PartialQuote);
         uint256 realUsdcReserve = 10_000;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _prepareGraduationFixture(address(adapter), realUsdcReserve, tokenSupply() - 1 ether, 0, 0, 0);
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(adapter), realUsdcReserve, tokenSupply() - 1 ether, 0, 0, 0
+        );
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
         uint256 poolTokenBefore = token.balanceOf(address(pool));
         uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
@@ -2417,15 +2626,18 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
     function test_GraduateLaunchOnlyPullRevertsAndRollsBack() public {
         ScenarioLiquidityAdapter adapter = new ScenarioLiquidityAdapter();
         adapter.setMode(ScenarioLiquidityAdapter.Mode.LaunchOnly);
         uint256 realUsdcReserve = 10_000;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _prepareGraduationFixture(address(adapter), realUsdcReserve, tokenSupply() - 1 ether, 0, 0, 0);
+        (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
+            address(adapter), realUsdcReserve, tokenSupply() - 1 ether, 0, 0, 0
+        );
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
         uint256 poolTokenBefore = token.balanceOf(address(pool));
         uint256 poolQuoteBefore = quoteAsset.balanceOf(address(pool));
@@ -2439,7 +2651,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
     function test_GraduateQuoteOnlyPullRevertsAndRollsBack() public {
@@ -2461,7 +2675,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
     function test_GraduateReentrantAdapterAttemptFails() public {
@@ -2477,7 +2693,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
     function test_SweepProtocolFeesBeforeInitializationReverts() public {
@@ -2500,7 +2718,12 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 realUsdcReserve = 1000;
         uint256 accruedProtocolFees = 50;
         (LaunchPoolHarness pool,) = _prepareSweepFixture(
-            realUsdcReserve, tokenSupply() - 1 ether, accruedProtocolFees, 0, 0, LaunchPool.PoolStatus.Active
+            realUsdcReserve,
+            tokenSupply() - 1 ether,
+            accruedProtocolFees,
+            0,
+            0,
+            LaunchPool.PoolStatus.Active
         );
 
         vm.prank(address(pool));
@@ -2589,7 +2812,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(stateAfter.accruedProtocolFees, 0);
         assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.GraduationPending));
         assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
-        assertEq(quoteAsset.balanceOf(address(pool)), DEFAULT_GRADUATION_THRESHOLD + quoteAssetDonation);
+        assertEq(
+            quoteAsset.balanceOf(address(pool)), DEFAULT_GRADUATION_THRESHOLD + quoteAssetDonation
+        );
         assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
         _assertPoolSolvency(pool);
     }
@@ -2600,7 +2825,12 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 accruedProtocolFees = 250;
         uint256 quoteAssetDonation = 45;
         (LaunchPoolHarness pool, LibrARCToken token) = _prepareGraduationFixture(
-            address(liquidityAdapter), realUsdcReserve, realTokenReserve, accruedProtocolFees, 0, quoteAssetDonation
+            address(liquidityAdapter),
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            0,
+            quoteAssetDonation
         );
 
         pool.graduate();
@@ -2635,10 +2865,16 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 accruedProtocolFees = 123;
         uint256 quoteAssetDonation = 5000;
         (LaunchPoolHarness pool,) = _prepareSweepFixture(
-            realUsdcReserve, realTokenReserve, accruedProtocolFees, 0, quoteAssetDonation, LaunchPool.PoolStatus.Active
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            0,
+            quoteAssetDonation,
+            LaunchPool.PoolStatus.Active
         );
 
-        (BondingCurveMath.BuyQuote memory buyQuoteBefore, bool reachesBefore) = pool.quoteBuy(10_000);
+        (BondingCurveMath.BuyQuote memory buyQuoteBefore, bool reachesBefore) =
+            pool.quoteBuy(10_000);
         uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
 
         vm.prank(CAROL);
@@ -2651,9 +2887,16 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(buyQuoteBefore.netUsdcIn, buyQuoteAfter.netUsdcIn);
         assertEq(buyQuoteBefore.tokenAmountOut, buyQuoteAfter.tokenAmountOut);
         assertEq(buyQuoteBefore.nextState.realUsdcReserve, buyQuoteAfter.nextState.realUsdcReserve);
-        assertEq(buyQuoteBefore.nextState.realTokenReserve, buyQuoteAfter.nextState.realTokenReserve);
-        assertEq(buyQuoteBefore.nextState.virtualUsdcReserve, buyQuoteAfter.nextState.virtualUsdcReserve);
-        assertEq(buyQuoteBefore.nextState.virtualTokenReserve, buyQuoteAfter.nextState.virtualTokenReserve);
+        assertEq(
+            buyQuoteBefore.nextState.realTokenReserve, buyQuoteAfter.nextState.realTokenReserve
+        );
+        assertEq(
+            buyQuoteBefore.nextState.virtualUsdcReserve, buyQuoteAfter.nextState.virtualUsdcReserve
+        );
+        assertEq(
+            buyQuoteBefore.nextState.virtualTokenReserve,
+            buyQuoteAfter.nextState.virtualTokenReserve
+        );
         assertEq(reachesBefore, reachesAfter);
         assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
         assertEq(quoteAsset.balanceOf(address(pool)), realUsdcReserve + quoteAssetDonation);
@@ -2684,7 +2927,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertTrue(quoteAsset.transfer(address(pool), quoteAssetDonation));
 
         pool.exposedSetAccountedState(
-            SELL_TEST_REAL_USDC_RESERVE, SELL_TEST_REAL_TOKEN_RESERVE, accruedProtocolFees, LaunchPool.PoolStatus.Active
+            SELL_TEST_REAL_USDC_RESERVE,
+            SELL_TEST_REAL_TOKEN_RESERVE,
+            accruedProtocolFees,
+            LaunchPool.PoolStatus.Active
         );
 
         BondingCurveMath.SellQuote memory sellQuoteBefore = pool.quoteSell(2 ether);
@@ -2699,12 +2945,24 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(sellQuoteBefore.fee, sellQuoteAfter.fee);
         assertEq(sellQuoteBefore.grossUsdcAmountOut, sellQuoteAfter.grossUsdcAmountOut);
         assertEq(sellQuoteBefore.netUsdcAmountOut, sellQuoteAfter.netUsdcAmountOut);
-        assertEq(sellQuoteBefore.nextState.realUsdcReserve, sellQuoteAfter.nextState.realUsdcReserve);
-        assertEq(sellQuoteBefore.nextState.realTokenReserve, sellQuoteAfter.nextState.realTokenReserve);
-        assertEq(sellQuoteBefore.nextState.virtualUsdcReserve, sellQuoteAfter.nextState.virtualUsdcReserve);
-        assertEq(sellQuoteBefore.nextState.virtualTokenReserve, sellQuoteAfter.nextState.virtualTokenReserve);
+        assertEq(
+            sellQuoteBefore.nextState.realUsdcReserve, sellQuoteAfter.nextState.realUsdcReserve
+        );
+        assertEq(
+            sellQuoteBefore.nextState.realTokenReserve, sellQuoteAfter.nextState.realTokenReserve
+        );
+        assertEq(
+            sellQuoteBefore.nextState.virtualUsdcReserve,
+            sellQuoteAfter.nextState.virtualUsdcReserve
+        );
+        assertEq(
+            sellQuoteBefore.nextState.virtualTokenReserve,
+            sellQuoteAfter.nextState.virtualTokenReserve
+        );
         assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
-        assertEq(quoteAsset.balanceOf(address(pool)), SELL_TEST_REAL_USDC_RESERVE + quoteAssetDonation);
+        assertEq(
+            quoteAsset.balanceOf(address(pool)), SELL_TEST_REAL_USDC_RESERVE + quoteAssetDonation
+        );
         assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
     }
 
@@ -2712,8 +2970,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 realUsdcReserve = 4000;
         uint256 accruedProtocolFees = 250;
         uint256 totalSupply_ = tokenSupply();
-        (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_) =
-            _deployFailingPool(18, 6, totalSupply_);
+        (
+            LaunchPoolHarness pool,
+            MockConfigurableToken launchToken_,
+            MockConfigurableToken quoteToken_
+        ) = _deployFailingPool(18, 6, totalSupply_);
 
         _fundCustomPoolExact(pool, launchToken_, totalSupply_);
         pool.initialize();
@@ -2723,7 +2984,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         quoteToken_.mint(address(pool), realUsdcReserve + accruedProtocolFees);
         pool.exposedSetAccountedState(
-            realUsdcReserve, totalSupply_ - 1 ether, accruedProtocolFees, LaunchPool.PoolStatus.Active
+            realUsdcReserve,
+            totalSupply_ - 1 ether,
+            accruedProtocolFees,
+            LaunchPool.PoolStatus.Active
         );
 
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
@@ -2733,7 +2997,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         quoteToken_.setFailTransfer(true);
 
-        vm.expectRevert(abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(quoteToken_)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SafeERC20.SafeERC20FailedOperation.selector, address(quoteToken_)
+            )
+        );
         pool.sweepProtocolFees();
 
         _assertProtocolFeeSweepRollback(
@@ -2779,7 +3047,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         feeOnTransferQuoteAsset.mint(address(pool), realUsdcReserve + accruedProtocolFees);
         pool.exposedSetAccountedState(
-            realUsdcReserve, token.FIXED_SUPPLY() - 1 ether, accruedProtocolFees, LaunchPool.PoolStatus.Active
+            realUsdcReserve,
+            token.FIXED_SUPPLY() - 1 ether,
+            accruedProtocolFees,
+            LaunchPool.PoolStatus.Active
         );
 
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
@@ -2810,7 +3081,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
     }
 
-    function testFuzz_UnauthorizedPauseCallersCannotMutateState(address caller, bool updatesBuyPause) public {
+    function testFuzz_UnauthorizedPauseCallersCannotMutateState(
+        address caller,
+        bool updatesBuyPause
+    ) public {
         vm.assume(caller != address(this));
 
         (LaunchPoolHarness pool, LibrARCToken token) = _deployDefaultPool();
@@ -2822,7 +3096,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         uint256 quoteAssetBalanceBefore = quoteAsset.balanceOf(address(pool));
 
         vm.prank(caller);
-        vm.expectRevert(abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, caller, address(this)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchPool.UnauthorizedFactory.selector, caller, address(this))
+        );
         if (updatesBuyPause) {
             pool.setBuysPaused(true);
         } else {
@@ -2830,7 +3106,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
         }
 
         _assertPoolStateAndBalancesUnchanged(
-            pool, stateBefore, launchTokenBalanceBefore, quoteAssetBalanceBefore, LaunchPool.PoolStatus.Active
+            pool,
+            stateBefore,
+            launchTokenBalanceBefore,
+            quoteAssetBalanceBefore,
+            LaunchPool.PoolStatus.Active
         );
         assertFalse(pool.buysPaused());
         assertFalse(pool.allTradingPaused());
@@ -2854,8 +3134,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         (BondingCurveMath.BuyQuote memory initialBuyQuote,) = pool.quoteBuy(initialBuyAmount);
-        uint256 purchasedTokens =
-            _buyFromPool(pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE);
+        uint256 purchasedTokens = _buyFromPool(
+            pool, ALICE, initialBuyAmount, initialBuyQuote.tokenAmountOut, block.timestamp, ALICE
+        );
 
         nextBuyAmount = bound(nextBuyAmount, 1, 100_000);
 
@@ -2865,7 +3146,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         }
         sellAmountIn = bound(sellAmountIn, minimumSellAmount, purchasedTokens);
 
-        (BondingCurveMath.BuyQuote memory buyQuoteBefore, bool reachesThresholdBefore) = pool.quoteBuy(nextBuyAmount);
+        (BondingCurveMath.BuyQuote memory buyQuoteBefore, bool reachesThresholdBefore) =
+            pool.quoteBuy(nextBuyAmount);
         BondingCurveMath.SellQuote memory sellQuoteBefore = pool.quoteSell(sellAmountIn);
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
         uint256 launchTokenBalanceBefore = token.balanceOf(address(pool));
@@ -2878,11 +3160,16 @@ contract LaunchPoolTest is Test, IERC20Errors {
             pool.setAllTradingPaused(true);
         }
 
-        (BondingCurveMath.BuyQuote memory buyQuoteAfter, bool reachesThresholdAfter) = pool.quoteBuy(nextBuyAmount);
+        (BondingCurveMath.BuyQuote memory buyQuoteAfter, bool reachesThresholdAfter) =
+            pool.quoteBuy(nextBuyAmount);
         BondingCurveMath.SellQuote memory sellQuoteAfter = pool.quoteSell(sellAmountIn);
 
         _assertPoolStateAndBalancesUnchanged(
-            pool, stateBefore, launchTokenBalanceBefore, quoteAssetBalanceBefore, LaunchPool.PoolStatus.Active
+            pool,
+            stateBefore,
+            launchTokenBalanceBefore,
+            quoteAssetBalanceBefore,
+            LaunchPool.PoolStatus.Active
         );
         _assertBuyQuoteEq(buyQuoteBefore, buyQuoteAfter);
         _assertSellQuoteEq(sellQuoteBefore, sellQuoteAfter);
@@ -2913,8 +3200,13 @@ contract LaunchPoolTest is Test, IERC20Errors {
             state.realUsdcReserve, state.realTokenReserve, state.accruedProtocolFees, expectedStatus
         );
 
-        assertEq(pool.canBuy(), expectedStatus == LaunchPool.PoolStatus.Active && !buysPaused_ && !allTradingPaused_);
-        assertEq(pool.canSell(), expectedStatus == LaunchPool.PoolStatus.Active && !allTradingPaused_);
+        assertEq(
+            pool.canBuy(),
+            expectedStatus == LaunchPool.PoolStatus.Active && !buysPaused_ && !allTradingPaused_
+        );
+        assertEq(
+            pool.canSell(), expectedStatus == LaunchPool.PoolStatus.Active && !allTradingPaused_
+        );
     }
 
     function testFuzz_SweepProtocolFeesTransfersEntireAccruedAmount(
@@ -2930,7 +3222,12 @@ contract LaunchPoolTest is Test, IERC20Errors {
         quoteAssetDonation = bound(quoteAssetDonation, 0, 1_000_000_000);
 
         (LaunchPoolHarness pool,) = _prepareSweepFixture(
-            realUsdcReserve, tokenSupply(), accruedProtocolFees, 0, quoteAssetDonation, LaunchPool.PoolStatus.Active
+            realUsdcReserve,
+            tokenSupply(),
+            accruedProtocolFees,
+            0,
+            quoteAssetDonation,
+            LaunchPool.PoolStatus.Active
         );
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
         uint256 remainingCapacityBefore = pool.remainingGraduationCapacity();
@@ -2990,7 +3287,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(stateAfter.accruedProtocolFees, 0);
         assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.GraduationPending));
         assertEq(pool.remainingGraduationCapacity(), remainingCapacityBefore);
-        assertEq(quoteAsset.balanceOf(address(pool)), DEFAULT_GRADUATION_THRESHOLD + quoteAssetDonation);
+        assertEq(
+            quoteAsset.balanceOf(address(pool)), DEFAULT_GRADUATION_THRESHOLD + quoteAssetDonation
+        );
         assertEq(quoteAsset.balanceOf(address(feeVault)), accruedProtocolFees);
     }
 
@@ -3067,27 +3366,36 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.expectRevert(ScenarioLiquidityAdapter.ScenarioLiquidityAdapterForcedRevert.selector);
         pool.graduate();
 
-        _assertGraduationRollback(pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter));
+        _assertGraduationRollback(
+            pool, stateBefore, poolTokenBefore, poolQuoteBefore, address(adapter)
+        );
     }
 
-    function testFuzz_SuccessfulBuysBelowGraduationCapacityMatchQuotes(uint256 usdcAmountIn) public {
+    function testFuzz_SuccessfulBuysBelowGraduationCapacityMatchQuotes(uint256 usdcAmountIn)
+        public
+    {
         uint256 threshold = 1_000_000;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
         usdcAmountIn = bound(usdcAmountIn, 1, threshold);
 
         (BondingCurveMath.BuyQuote memory quote,) = pool.quoteBuy(usdcAmountIn);
-        uint256 tokenAmountOut = _buyFromPool(pool, ALICE, usdcAmountIn, quote.tokenAmountOut, block.timestamp, ALICE);
+        uint256 tokenAmountOut =
+            _buyFromPool(pool, ALICE, usdcAmountIn, quote.tokenAmountOut, block.timestamp, ALICE);
 
         assertEq(tokenAmountOut, quote.tokenAmountOut);
         _assertCurveStateEq(pool.curveState(), quote.nextState);
         _assertPoolSolvency(pool);
     }
 
-    function testFuzz_SuccessfulSellsMatchQuotesAndPreserveSolvency(uint256 buyAmountIn, uint256 sellAmountIn) public {
+    function testFuzz_SuccessfulSellsMatchQuotesAndPreserveSolvency(
+        uint256 buyAmountIn,
+        uint256 sellAmountIn
+    ) public {
         buyAmountIn = bound(buyAmountIn, 10_000, 1_000_000);
 
         uint256 totalSupply_ = 1_000_000 ether;
@@ -3115,7 +3423,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         launchToken_.approve(address(pool), sellAmountIn);
 
         vm.prank(ALICE);
-        uint256 netUsdcAmountOut = pool.sell(sellAmountIn, quote.netUsdcAmountOut, block.timestamp, ALICE);
+        uint256 netUsdcAmountOut =
+            pool.sell(sellAmountIn, quote.netUsdcAmountOut, block.timestamp, ALICE);
 
         assertEq(netUsdcAmountOut, quote.netUsdcAmountOut);
         _assertCurveStateEq(pool.curveState(), quote.nextState);
@@ -3140,7 +3449,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
         vm.prank(ALICE);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchPool.InsufficientTokenOutput.selector, quote.tokenAmountOut + 1, quote.tokenAmountOut
+                LaunchPool.InsufficientTokenOutput.selector,
+                quote.tokenAmountOut + 1,
+                quote.tokenAmountOut
             )
         );
         pool.buy(usdcAmountIn, quote.tokenAmountOut + 1, block.timestamp, ALICE);
@@ -3152,8 +3463,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
     function testFuzz_ThresholdCrossingBuysNeverMutateState(uint256 usdcAmountIn) public {
         uint256 threshold = 50_000;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
@@ -3167,7 +3479,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
 
         vm.prank(ALICE);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, threshold)
+            abi.encodeWithSelector(
+                LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, threshold
+            )
         );
         pool.buy(usdcAmountIn, 1, block.timestamp, ALICE);
 
@@ -3177,7 +3491,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(token.balanceOf(address(pool)), poolTokenBefore);
     }
 
-    function testFuzz_ValidConstructorVirtualReserves(uint256 virtualUsdcReserve, uint256 virtualTokenReserve) public {
+    function testFuzz_ValidConstructorVirtualReserves(
+        uint256 virtualUsdcReserve,
+        uint256 virtualTokenReserve
+    ) public {
         virtualUsdcReserve = bound(virtualUsdcReserve, 1, type(uint128).max);
         virtualTokenReserve = bound(virtualTokenReserve, 1, type(uint128).max);
 
@@ -3198,7 +3515,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
         sellFee = bound(sellFee, 0, 9999);
 
         (LaunchPoolHarness pool,) = _deployConfiguredPool(
-            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, buyFee, sellFee, DEFAULT_GRADUATION_THRESHOLD
+            DEFAULT_VIRTUAL_USDC_RESERVE,
+            DEFAULT_VIRTUAL_TOKEN_RESERVE,
+            buyFee,
+            sellFee,
+            DEFAULT_GRADUATION_THRESHOLD
         );
 
         assertEq(pool.buyFeeBps(), buyFee);
@@ -3215,7 +3536,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
         graduationThreshold = bound(graduationThreshold, 1, type(uint128).max);
 
         (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
-            virtualUsdcReserve, virtualTokenReserve, DEFAULT_BUY_FEE_BPS, DEFAULT_SELL_FEE_BPS, graduationThreshold
+            virtualUsdcReserve,
+            virtualTokenReserve,
+            DEFAULT_BUY_FEE_BPS,
+            DEFAULT_SELL_FEE_BPS,
+            graduationThreshold
         );
         _fundPoolExact(pool, token);
 
@@ -3232,7 +3557,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
         extraBalance = bound(extraBalance, 1, type(uint128).max);
 
         SurplusBalanceToken token = new SurplusBalanceToken(address(this), 1_000_000);
-        LaunchPoolHarness pool = _deployPool(address(token), token.totalSupply(), 1000, 2000, 0, 0, 1_000_000);
+        LaunchPoolHarness pool =
+            _deployPool(address(token), token.totalSupply(), 1000, 2000, 0, 0, 1_000_000);
 
         assertTrue(token.transfer(address(pool), token.totalSupply()));
         token.setPoolBalanceBonus(address(pool), extraBalance);
@@ -3242,23 +3568,30 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(pool.curveState().realTokenReserve, token.totalSupply());
     }
 
-    function testFuzz_ValidBuyQuotesBoundedBelowTheGraduationThreshold(uint256 usdcAmountIn) public {
+    function testFuzz_ValidBuyQuotesBoundedBelowTheGraduationThreshold(uint256 usdcAmountIn)
+        public
+    {
         uint256 threshold = 1_000_000;
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold);
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, DEFAULT_VIRTUAL_TOKEN_RESERVE, 0, 0, threshold
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
         usdcAmountIn = bound(usdcAmountIn, 1, threshold);
 
-        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) = pool.quoteBuy(usdcAmountIn);
+        (BondingCurveMath.BuyQuote memory quote, bool reachesGraduationThreshold) =
+            pool.quoteBuy(usdcAmountIn);
 
         assertLe(quote.nextState.realUsdcReserve, threshold);
         assertLe(quote.tokenAmountOut, token.FIXED_SUPPLY());
         assertEq(reachesGraduationThreshold, quote.nextState.realUsdcReserve == threshold);
     }
 
-    function testFuzz_QuoteFunctionsNeverMutateStoredState(uint256 usdcAmountIn, uint256 tokenAmountIn) public {
+    function testFuzz_QuoteFunctionsNeverMutateStoredState(
+        uint256 usdcAmountIn,
+        uint256 tokenAmountIn
+    ) public {
         (LaunchPoolHarness pool,) = _deployConfiguredPool(
             DEFAULT_VIRTUAL_USDC_RESERVE,
             SELL_TEST_VIRTUAL_TOKEN_RESERVE,
@@ -3271,7 +3604,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         pool.initialize();
 
         pool.exposedSetAccountedState(
-            SELL_TEST_REAL_USDC_RESERVE, SELL_TEST_REAL_TOKEN_RESERVE, 123, LaunchPool.PoolStatus.Active
+            SELL_TEST_REAL_USDC_RESERVE,
+            SELL_TEST_REAL_TOKEN_RESERVE,
+            123,
+            LaunchPool.PoolStatus.Active
         );
         BondingCurveMath.CurveState memory stateBefore = pool.curveState();
         uint256 statusBefore = uint256(pool.status());
@@ -3287,15 +3623,21 @@ contract LaunchPoolTest is Test, IERC20Errors {
         _assertCurveStateEq(stateBefore, stateAfter);
     }
 
-    function testFuzz_QuoteOutputsNeverExceedRealReserves(uint256 usdcAmountIn, uint256 tokenAmountIn) public {
-        (LaunchPoolHarness pool, LibrARCToken token) =
-            _deployConfiguredPool(DEFAULT_VIRTUAL_USDC_RESERVE, SELL_TEST_VIRTUAL_TOKEN_RESERVE, 0, 0, 10_000_000);
+    function testFuzz_QuoteOutputsNeverExceedRealReserves(
+        uint256 usdcAmountIn,
+        uint256 tokenAmountIn
+    ) public {
+        (LaunchPoolHarness pool, LibrARCToken token) = _deployConfiguredPool(
+            DEFAULT_VIRTUAL_USDC_RESERVE, SELL_TEST_VIRTUAL_TOKEN_RESERVE, 0, 0, 10_000_000
+        );
         _fundPoolExact(pool, token);
         pool.initialize();
 
         uint256 realUsdcReserve = SELL_TEST_REAL_USDC_RESERVE;
         uint256 realTokenReserve = SELL_TEST_REAL_TOKEN_RESERVE;
-        pool.exposedSetAccountedState(realUsdcReserve, realTokenReserve, 0, LaunchPool.PoolStatus.Active);
+        pool.exposedSetAccountedState(
+            realUsdcReserve, realTokenReserve, 0, LaunchPool.PoolStatus.Active
+        );
 
         usdcAmountIn = bound(usdcAmountIn, 1, 1_000_000);
         tokenAmountIn = bound(tokenAmountIn, 2 ether, realTokenReserve / 10);
@@ -3311,12 +3653,16 @@ contract LaunchPoolTest is Test, IERC20Errors {
         (LaunchPoolHarness pool,) = _deployDefaultPool();
         realUsdcReserve = bound(realUsdcReserve, 0, DEFAULT_GRADUATION_THRESHOLD);
 
-        pool.exposedSetAccountedState(realUsdcReserve, 0, type(uint128).max, LaunchPool.PoolStatus.Active);
+        pool.exposedSetAccountedState(
+            realUsdcReserve, 0, type(uint128).max, LaunchPool.PoolStatus.Active
+        );
 
         assertEq(pool.remainingGraduationCapacity(), DEFAULT_GRADUATION_THRESHOLD - realUsdcReserve);
     }
 
-    function _mintAndApproveQuoteAsset(address holder, uint256 amount, LaunchPoolHarness pool) internal {
+    function _mintAndApproveQuoteAsset(address holder, uint256 amount, LaunchPoolHarness pool)
+        internal
+    {
         quoteAsset.mint(holder, amount);
 
         vm.prank(holder);
@@ -3347,7 +3693,8 @@ contract LaunchPoolTest is Test, IERC20Errors {
     ) internal returns (uint256 tokenAmountOut) {
         quoteAsset.mint(address(this), usdcAmountIn);
         quoteAsset.approve(address(pool), usdcAmountIn);
-        tokenAmountOut = pool.buyForFactory(buyer, usdcAmountIn, minTokenAmountOut, deadline, recipient);
+        tokenAmountOut =
+            pool.buyForFactory(buyer, usdcAmountIn, minTokenAmountOut, deadline, recipient);
     }
 
     function _prepareGraduationFixture(
@@ -3399,7 +3746,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         }
 
         pool.exposedSetAccountedState(
-            realUsdcReserve, realTokenReserve, accruedProtocolFees, LaunchPool.PoolStatus.GraduationPending
+            realUsdcReserve,
+            realTokenReserve,
+            accruedProtocolFees,
+            LaunchPool.PoolStatus.GraduationPending
         );
     }
 
@@ -3450,7 +3800,9 @@ contract LaunchPoolTest is Test, IERC20Errors {
             assertTrue(quoteAsset.transfer(address(pool), quoteAssetDonation));
         }
 
-        pool.exposedSetAccountedState(realUsdcReserve, realTokenReserve, accruedProtocolFees, status_);
+        pool.exposedSetAccountedState(
+            realUsdcReserve, realTokenReserve, accruedProtocolFees, status_
+        );
     }
 
     function _deployCustomPool(
@@ -3520,9 +3872,17 @@ contract LaunchPoolTest is Test, IERC20Errors {
         tokenAmountOut = _buyFromPool(pool, ALICE, buyAmountIn, 1, block.timestamp, ALICE);
     }
 
-    function _deployFailingPool(uint8 launchTokenDecimals, uint8 quoteTokenDecimals, uint256 totalTokenSupply)
+    function _deployFailingPool(
+        uint8 launchTokenDecimals,
+        uint8 quoteTokenDecimals,
+        uint256 totalTokenSupply
+    )
         internal
-        returns (LaunchPoolHarness pool, MockConfigurableToken launchToken_, MockConfigurableToken quoteToken_)
+        returns (
+            LaunchPoolHarness pool,
+            MockConfigurableToken launchToken_,
+            MockConfigurableToken quoteToken_
+        )
     {
         launchToken_ = new MockConfigurableToken("Launch Token", "LCH", launchTokenDecimals);
         quoteToken_ = new MockConfigurableToken("Arc USDC", "USDC", quoteTokenDecimals);
@@ -3540,7 +3900,11 @@ contract LaunchPoolTest is Test, IERC20Errors {
         );
     }
 
-    function _fundCustomPoolExact(LaunchPoolHarness pool, MockConfigurableToken launchToken_, uint256 amount) internal {
+    function _fundCustomPoolExact(
+        LaunchPoolHarness pool,
+        MockConfigurableToken launchToken_,
+        uint256 amount
+    ) internal {
         assertTrue(launchToken_.transfer(address(pool), amount));
     }
 
@@ -3564,7 +3928,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertTrue(launchToken_.transfer(ALICE, traderTokenAmount));
 
         pool.exposedSetAccountedState(
-            realUsdcReserve, totalTokenSupply_ - traderTokenAmount, accruedProtocolFees, LaunchPool.PoolStatus.Active
+            realUsdcReserve,
+            totalTokenSupply_ - traderTokenAmount,
+            accruedProtocolFees,
+            LaunchPool.PoolStatus.Active
         );
 
         vm.prank(ALICE);
@@ -3658,10 +4025,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
         }
     }
 
-    function _assertCurveStateEq(BondingCurveMath.CurveState memory left, BondingCurveMath.CurveState memory right)
-        internal
-        pure
-    {
+    function _assertCurveStateEq(
+        BondingCurveMath.CurveState memory left,
+        BondingCurveMath.CurveState memory right
+    ) internal pure {
         assertEq(left.realUsdcReserve, right.realUsdcReserve);
         assertEq(left.realTokenReserve, right.realTokenReserve);
         assertEq(left.virtualUsdcReserve, right.virtualUsdcReserve);
@@ -3669,20 +4036,20 @@ contract LaunchPoolTest is Test, IERC20Errors {
         assertEq(left.accruedProtocolFees, right.accruedProtocolFees);
     }
 
-    function _assertBuyQuoteEq(BondingCurveMath.BuyQuote memory left, BondingCurveMath.BuyQuote memory right)
-        internal
-        pure
-    {
+    function _assertBuyQuoteEq(
+        BondingCurveMath.BuyQuote memory left,
+        BondingCurveMath.BuyQuote memory right
+    ) internal pure {
         assertEq(left.fee, right.fee);
         assertEq(left.netUsdcIn, right.netUsdcIn);
         assertEq(left.tokenAmountOut, right.tokenAmountOut);
         _assertCurveStateEq(left.nextState, right.nextState);
     }
 
-    function _assertSellQuoteEq(BondingCurveMath.SellQuote memory left, BondingCurveMath.SellQuote memory right)
-        internal
-        pure
-    {
+    function _assertSellQuoteEq(
+        BondingCurveMath.SellQuote memory left,
+        BondingCurveMath.SellQuote memory right
+    ) internal pure {
         assertEq(left.fee, right.fee);
         assertEq(left.grossUsdcAmountOut, right.grossUsdcAmountOut);
         assertEq(left.netUsdcAmountOut, right.netUsdcAmountOut);
@@ -3705,7 +4072,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
     function _assertPoolSolvency(LaunchPoolHarness pool) internal view {
         BondingCurveMath.CurveState memory state = pool.curveState();
 
-        assertGe(pool.quoteAsset().balanceOf(address(pool)), state.realUsdcReserve + state.accruedProtocolFees);
+        assertGe(
+            pool.quoteAsset().balanceOf(address(pool)),
+            state.realUsdcReserve + state.accruedProtocolFees
+        );
         assertGe(pool.launchToken().balanceOf(address(pool)), state.realTokenReserve);
     }
 
@@ -3736,7 +4106,10 @@ contract LaunchPoolTest is Test, IERC20Errors {
     ) internal view {
         assertEq(uint256(pool.status()), uint256(expectedStatus));
         _assertCurveStateEq(pool.curveState(), expectedState);
-        assertEq(pool.remainingGraduationCapacity(), pool.graduationThreshold() - expectedState.realUsdcReserve);
+        assertEq(
+            pool.remainingGraduationCapacity(),
+            pool.graduationThreshold() - expectedState.realUsdcReserve
+        );
         assertEq(launchToken_.balanceOf(address(pool)), expectedLaunchTokenBalance);
         assertEq(quoteToken_.balanceOf(address(pool)), expectedQuoteAssetBalance);
         assertEq(quoteToken_.balanceOf(address(feeVault)), expectedFeeVaultQuoteAssetBalance);

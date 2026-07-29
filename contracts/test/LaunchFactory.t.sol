@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {Test} from "forge-std/Test.sol";
-import {Vm} from "forge-std/Vm.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
+import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
+import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 
-import {BondingCurveMath} from "../src/libraries/BondingCurveMath.sol";
-import {FeeVault} from "../src/FeeVault.sol";
-import {ILiquidityAdapter} from "../src/interfaces/ILiquidityAdapter.sol";
-import {LaunchFactory} from "../src/LaunchFactory.sol";
-import {LaunchPool} from "../src/LaunchPool.sol";
-import {LibrARCToken} from "../src/LibrARCToken.sol";
-import {MockLiquidityAdapter} from "./mocks/MockLiquidityAdapter.sol";
+import { BondingCurveMath } from "../src/libraries/BondingCurveMath.sol";
+import { FeeVault } from "../src/FeeVault.sol";
+import { ILiquidityAdapter } from "../src/interfaces/ILiquidityAdapter.sol";
+import { LaunchFactory } from "../src/LaunchFactory.sol";
+import { LaunchPool } from "../src/LaunchPool.sol";
+import { LibrARCToken } from "../src/LibrARCToken.sol";
+import { MockLiquidityAdapter } from "./mocks/MockLiquidityAdapter.sol";
 
 contract MockQuoteAsset is ERC20 {
-    constructor() ERC20("Arc USDC", "USDC") {}
+    constructor() ERC20("Arc USDC", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -33,7 +33,7 @@ contract FeeOnTransferQuoteAsset is ERC20 {
     uint256 internal constant TRANSFER_FEE_BPS = 100;
     address internal constant FEE_SINK = address(0xDEAD);
 
-    constructor() ERC20("Arc USDC", "USDC") {}
+    constructor() ERC20("Arc USDC", "USDC") { }
 
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -405,7 +405,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.recordLogs();
         vm.prank(CREATOR);
-        (address launchToken, address launchPool, uint256 launchId) = factory.createLaunch(name_, symbol_, metadataUri_);
+        (address launchToken, address launchPool, uint256 launchId) =
+            factory.createLaunch(name_, symbol_, metadataUri_);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         assertEq(launchId, 1);
@@ -432,8 +433,12 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(state.realUsdcReserve, 0);
         assertEq(state.accruedProtocolFees, 0);
 
-        (address creatorRecord, address tokenRecord, address poolRecord, bytes32 metadataHashRecord) =
-            factory.launchById(launchId);
+        (
+            address creatorRecord,
+            address tokenRecord,
+            address poolRecord,
+            bytes32 metadataHashRecord
+        ) = factory.launchById(launchId);
         assertEq(creatorRecord, CREATOR);
         assertEq(tokenRecord, launchToken);
         assertEq(poolRecord, launchPool);
@@ -446,13 +451,22 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertFalse(factory.hasRole(factory.DEFAULT_ADMIN_ROLE(), CREATOR));
 
         _assertLaunchCreatedLog(
-            logs, launchId, CREATOR, launchToken, launchPool, name_, symbol_, metadataUri_, metadataHash
+            logs,
+            launchId,
+            CREATOR,
+            launchToken,
+            launchPool,
+            name_,
+            symbol_,
+            metadataUri_,
+            metadataHash
         );
     }
 
     function test_LaunchIdsIncrementMonotonically() public {
         vm.startPrank(CREATOR);
-        (, address firstPool, uint256 firstId) = factory.createLaunch("Token One", "ONE", "ipfs://launch/one");
+        (, address firstPool, uint256 firstId) =
+            factory.createLaunch("Token One", "ONE", "ipfs://launch/one");
         (address secondToken, address secondPool, uint256 secondId) =
             factory.createLaunch("Token Two", "TWO", "ipfs://launch/two");
         vm.stopPrank();
@@ -461,7 +475,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(secondId, 2);
         assertEq(factory.launchCount(), 2);
         assertEq(factory.tokenByPool(secondPool), secondToken);
-        assertEq(uint256(LaunchPool(payable(firstPool)).status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(
+            uint256(LaunchPool(payable(firstPool)).status()), uint256(LaunchPool.PoolStatus.Active)
+        );
     }
 
     function test_DuplicateNamesSymbolsAndMetadataAreAllowed() public {
@@ -470,8 +486,10 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         string memory metadataUri_ = "ipfs://duplicate";
 
         vm.startPrank(CREATOR);
-        (address firstToken, address firstPool, uint256 firstId) = factory.createLaunch(name_, symbol_, metadataUri_);
-        (address secondToken, address secondPool, uint256 secondId) = factory.createLaunch(name_, symbol_, metadataUri_);
+        (address firstToken, address firstPool, uint256 firstId) =
+            factory.createLaunch(name_, symbol_, metadataUri_);
+        (address secondToken, address secondPool, uint256 secondId) =
+            factory.createLaunch(name_, symbol_, metadataUri_);
         vm.stopPrank();
 
         assertEq(firstId, 1);
@@ -490,8 +508,12 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         factory.createLaunch("", "TOK", "ipfs://meta");
 
         assertEq(factory.launchCount(), 0);
-        (address creatorRecord, address tokenRecord, address poolRecord, bytes32 metadataHashRecord) =
-            factory.launchById(1);
+        (
+            address creatorRecord,
+            address tokenRecord,
+            address poolRecord,
+            bytes32 metadataHashRecord
+        ) = factory.launchById(1);
         assertEq(creatorRecord, address(0));
         assertEq(tokenRecord, address(0));
         assertEq(poolRecord, address(0));
@@ -545,7 +567,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(OTHER_ACCOUNT);
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole
+            )
         );
         factory.pauseLaunchCreation();
     }
@@ -558,7 +582,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(OTHER_ACCOUNT);
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole
+            )
         );
         factory.unpauseLaunchCreation();
     }
@@ -580,7 +606,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         factory.pauseLaunchCreation();
 
         assertTrue(LaunchPool(payable(launchPool)).isTradingActive());
-        assertEq(uint256(LaunchPool(payable(launchPool)).status()), uint256(LaunchPool.PoolStatus.Active));
+        assertEq(
+            uint256(LaunchPool(payable(launchPool)).status()), uint256(LaunchPool.PoolStatus.Active)
+        );
     }
 
     function test_PauserCanPauseAndUnpausePoolBuys() public {
@@ -643,22 +671,30 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         vm.startPrank(OTHER_ACCOUNT);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole
+            )
         );
         factory.pausePoolBuys(launchPool);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole
+            )
         );
         factory.unpausePoolBuys(launchPool);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole
+            )
         );
         factory.pausePoolTrading(launchPool);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, OTHER_ACCOUNT, pauserRole
+            )
         );
         factory.unpausePoolTrading(launchPool);
 
@@ -667,11 +703,15 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
     function test_UnknownAndZeroPoolAddressesRevertForPauseManagement() public {
         vm.prank(INITIAL_ADMIN);
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.UnknownLibrarcPool.selector, address(0)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchFactory.UnknownLibrarcPool.selector, address(0))
+        );
         factory.pausePoolBuys(address(0));
 
         vm.prank(INITIAL_ADMIN);
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.UnknownLibrarcPool.selector, OTHER_ACCOUNT));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchFactory.UnknownLibrarcPool.selector, OTHER_ACCOUNT)
+        );
         factory.pausePoolTrading(OTHER_ACCOUNT);
     }
 
@@ -700,7 +740,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertFalse(factory.paused());
 
         vm.prank(CREATOR);
-        (, address secondPool, uint256 secondLaunchId) = factory.createLaunch("Token Two", "TWO", "ipfs://launch/two");
+        (, address secondPool, uint256 secondLaunchId) =
+            factory.createLaunch("Token Two", "TWO", "ipfs://launch/two");
 
         assertEq(secondLaunchId, 2);
         assertTrue(factory.isLibrarcPool(secondPool));
@@ -708,8 +749,10 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
     function test_PausingOnePoolDoesNotAffectAnotherPoolOrAccounting() public {
         vm.startPrank(CREATOR);
-        (, address firstPoolAddress,) = factory.createLaunch("Token One", "ONE", "ipfs://launch/one");
-        (, address secondPoolAddress,) = factory.createLaunch("Token Two", "TWO", "ipfs://launch/two");
+        (, address firstPoolAddress,) =
+            factory.createLaunch("Token One", "ONE", "ipfs://launch/one");
+        (, address secondPoolAddress,) =
+            factory.createLaunch("Token Two", "TWO", "ipfs://launch/two");
         vm.stopPrank();
 
         LaunchPool firstPool = LaunchPool(payable(firstPoolAddress));
@@ -732,7 +775,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         _assertCurveStateEq(secondPool.curveState(), secondStateBefore);
         assertEq(firstPool.launchToken().balanceOf(firstPoolAddress), firstPoolTokenBalanceBefore);
         assertEq(firstPool.quoteAsset().balanceOf(firstPoolAddress), firstPoolQuoteBalanceBefore);
-        assertEq(secondPool.launchToken().balanceOf(secondPoolAddress), secondPoolTokenBalanceBefore);
+        assertEq(
+            secondPool.launchToken().balanceOf(secondPoolAddress), secondPoolTokenBalanceBefore
+        );
         assertEq(secondPool.quoteAsset().balanceOf(secondPoolAddress), secondPoolQuoteBalanceBefore);
 
         vm.prank(INITIAL_ADMIN);
@@ -770,7 +815,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         string memory metadataUri_ = "ipfs://librarc/launch/with-buy";
         uint256 usdcAmountIn = 100_000;
         uint256 factoryBalanceBefore = quoteAsset.balanceOf(address(factory));
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(factory, usdcAmountIn);
         bytes32 metadataHash = keccak256(bytes(metadataUri_));
 
         quoteAsset.mint(CREATOR, usdcAmountIn);
@@ -780,7 +826,13 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         vm.recordLogs();
         vm.prank(CREATOR);
         (address launchToken, address launchPool, uint256 launchId, uint256 tokenAmountOut) = factory.createLaunchAndBuy(
-            name_, symbol_, metadataUri_, usdcAmountIn, expectedQuote.tokenAmountOut, block.timestamp, CREATOR
+            name_,
+            symbol_,
+            metadataUri_,
+            usdcAmountIn,
+            expectedQuote.tokenAmountOut,
+            block.timestamp,
+            CREATOR
         );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
@@ -799,7 +851,15 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         _assertCurveStateEq(pool.curveState(), expectedQuote.nextState);
 
         _assertLaunchCreatedLog(
-            logs, launchId, CREATOR, launchToken, launchPool, name_, symbol_, metadataUri_, metadataHash
+            logs,
+            launchId,
+            CREATOR,
+            launchToken,
+            launchPool,
+            name_,
+            symbol_,
+            metadataUri_,
+            metadataHash
         );
         _assertPoolBuyExecutedLog(logs, launchPool, CREATOR, CREATOR, usdcAmountIn, expectedQuote);
         _assertCreatorInitialPurchaseExecutedLog(
@@ -810,7 +870,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
     function test_CreateLaunchAndBuySupportsAlternateRecipient() public {
         uint256 usdcAmountIn = 75_000;
         address recipient = OTHER_ACCOUNT;
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(factory, usdcAmountIn);
 
         quoteAsset.mint(CREATOR, usdcAmountIn);
         vm.prank(CREATOR);
@@ -835,7 +896,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
     function test_CreateLaunchAndBuyUsesSamePricingAsEquivalentPublicBuy() public {
         uint256 usdcAmountIn = 120_000;
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(factory, usdcAmountIn);
 
         quoteAsset.mint(CREATOR, usdcAmountIn);
         vm.prank(CREATOR);
@@ -880,7 +942,11 @@ contract LaunchFactoryTest is Test, IERC20Errors {
     function test_CreateLaunchAndBuyExpiredDeadlineReverts() public {
         vm.warp(100);
         vm.prank(CREATOR);
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.ExpiredDeadline.selector, uint256(100), uint256(99)));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LaunchFactory.ExpiredDeadline.selector, uint256(100), uint256(99)
+            )
+        );
         factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", 1, 0, 99, CREATOR);
 
         assertEq(factory.launchCount(), 0);
@@ -892,9 +958,13 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(CREATOR);
         vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(factory), 0, usdcAmountIn)
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientAllowance.selector, address(factory), 0, usdcAmountIn
+            )
         );
-        factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", usdcAmountIn, 1, block.timestamp, CREATOR);
+        factory.createLaunchAndBuy(
+            "Token", "TOK", "ipfs://meta", usdcAmountIn, 1, block.timestamp, CREATOR
+        );
 
         assertEq(factory.launchCount(), 0);
         assertEq(quoteAsset.balanceOf(CREATOR), usdcAmountIn);
@@ -909,9 +979,13 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(CREATOR);
         vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, CREATOR, uint256(0), usdcAmountIn)
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientBalance.selector, CREATOR, uint256(0), usdcAmountIn
+            )
         );
-        factory.createLaunchAndBuy("Token", "TOK", "ipfs://meta", usdcAmountIn, 1, block.timestamp, CREATOR);
+        factory.createLaunchAndBuy(
+            "Token", "TOK", "ipfs://meta", usdcAmountIn, 1, block.timestamp, CREATOR
+        );
 
         assertEq(factory.launchCount(), 0);
         assertEq(quoteAsset.balanceOf(address(factory)), 0);
@@ -919,7 +993,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
     function test_CreateLaunchAndBuySlippageFailureRevertsAtomically() public {
         uint256 usdcAmountIn = 100_000;
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(factory, usdcAmountIn);
 
         quoteAsset.mint(CREATOR, usdcAmountIn);
         vm.prank(CREATOR);
@@ -934,7 +1009,13 @@ contract LaunchFactoryTest is Test, IERC20Errors {
             )
         );
         factory.createLaunchAndBuy(
-            "Token", "TOK", "ipfs://slippage", usdcAmountIn, expectedQuote.tokenAmountOut + 1, block.timestamp, CREATOR
+            "Token",
+            "TOK",
+            "ipfs://slippage",
+            usdcAmountIn,
+            expectedQuote.tokenAmountOut + 1,
+            block.timestamp,
+            CREATOR
         );
 
         assertEq(factory.launchCount(), 0);
@@ -966,10 +1047,18 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(CREATOR);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, 999)
+            abi.encodeWithSelector(
+                LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, 999
+            )
         );
         thresholdFactory.createLaunchAndBuy(
-            "Threshold", "THR", "ipfs://threshold/overshoot", usdcAmountIn, 1, block.timestamp, CREATOR
+            "Threshold",
+            "THR",
+            "ipfs://threshold/overshoot",
+            usdcAmountIn,
+            1,
+            block.timestamp,
+            CREATOR
         );
 
         assertEq(thresholdFactory.launchCount(), 0);
@@ -994,7 +1083,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
             DEFAULT_MAX_METADATA_URI_LENGTH
         );
         uint256 usdcAmountIn = 1000;
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(thresholdFactory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(thresholdFactory, usdcAmountIn);
 
         quoteAsset.mint(CREATOR, usdcAmountIn);
         vm.prank(CREATOR);
@@ -1015,14 +1105,18 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         assertEq(launchId, 1);
         assertEq(tokenAmountOut, expectedQuote.tokenAmountOut);
-        assertEq(uint256(LaunchPool(payable(launchPool)).status()), uint256(LaunchPool.PoolStatus.GraduationPending));
+        assertEq(
+            uint256(LaunchPool(payable(launchPool)).status()),
+            uint256(LaunchPool.PoolStatus.GraduationPending)
+        );
         _assertGraduationPendingLog(logs, launchPool, 1000);
     }
 
     function test_CreateLaunchAndBuyPreservesPreExistingFactoryQuoteAssetBalance() public {
         uint256 donatedFactoryBalance = 42_000;
         uint256 usdcAmountIn = 80_000;
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(factory, usdcAmountIn);
 
         quoteAsset.mint(address(factory), donatedFactoryBalance);
         quoteAsset.mint(CREATOR, usdcAmountIn);
@@ -1046,7 +1140,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(quoteAsset.allowance(address(factory), launchPool), 0);
     }
 
-    function test_CreateLaunchAndBuyFeeOnTransferQuoteAssetRevertsOnUnexpectedBalanceDelta() public {
+    function test_CreateLaunchAndBuyFeeOnTransferQuoteAssetRevertsOnUnexpectedBalanceDelta()
+        public
+    {
         FeeOnTransferQuoteAsset feeOnTransferQuoteAsset = new FeeOnTransferQuoteAsset();
         LaunchFactory feeOnTransferFactory = _deployFactory(
             INITIAL_ADMIN,
@@ -1071,11 +1167,20 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         vm.prank(CREATOR);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchFactory.UnexpectedQuoteAssetBalanceIncrease.selector, uint256(0), uint256(99_000), usdcAmountIn
+                LaunchFactory.UnexpectedQuoteAssetBalanceIncrease.selector,
+                uint256(0),
+                uint256(99_000),
+                usdcAmountIn
             )
         );
         feeOnTransferFactory.createLaunchAndBuy(
-            "Fee Token", "FEE", "ipfs://launch/fee-on-transfer", usdcAmountIn, 1, block.timestamp, CREATOR
+            "Fee Token",
+            "FEE",
+            "ipfs://launch/fee-on-transfer",
+            usdcAmountIn,
+            1,
+            block.timestamp,
+            CREATOR
         );
 
         assertEq(feeOnTransferFactory.launchCount(), 0);
@@ -1117,7 +1222,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         string memory metadataUri_ = _alphanumericString(metadataSeed, metadataLength);
 
         vm.prank(CREATOR);
-        (address launchToken, address launchPool, uint256 launchId) = factory.createLaunch(name_, symbol_, metadataUri_);
+        (address launchToken, address launchPool, uint256 launchId) =
+            factory.createLaunch(name_, symbol_, metadataUri_);
 
         assertEq(launchId, 1);
         assertEq(factory.launchCount(), 1);
@@ -1127,7 +1233,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(factory.tokenByPool(launchPool), launchToken);
     }
 
-    function testFuzz_MultipleSequentialLaunchCreationsRemainConsistent(uint256 launchTotal) public {
+    function testFuzz_MultipleSequentialLaunchCreationsRemainConsistent(uint256 launchTotal)
+        public
+    {
         launchTotal = bound(launchTotal, 1, 12);
 
         for (uint256 i = 1; i <= launchTotal; ++i) {
@@ -1147,7 +1255,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
             assertTrue(factory.isLibrarcPool(launchPool));
             assertEq(LibrARCToken(launchToken).balanceOf(address(factory)), 0);
             assertEq(
-                LaunchPool(payable(launchPool)).curveState().realTokenReserve, LibrARCToken(launchToken).FIXED_SUPPLY()
+                LaunchPool(payable(launchPool)).curveState().realTokenReserve,
+                LibrARCToken(launchToken).FIXED_SUPPLY()
             );
         }
     }
@@ -1161,7 +1270,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         vm.assume(recipient != address(0));
 
         string memory metadataUri_ = _alphanumericString(metadataSeed, 24);
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(factory, usdcAmountIn);
 
         quoteAsset.mint(CREATOR, usdcAmountIn);
         vm.prank(CREATOR);
@@ -1169,7 +1279,13 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(CREATOR);
         (address launchToken, address launchPool, uint256 launchId, uint256 tokenAmountOut) = factory.createLaunchAndBuy(
-            "Fuzz Token", "FZTK", metadataUri_, usdcAmountIn, expectedQuote.tokenAmountOut, block.timestamp, recipient
+            "Fuzz Token",
+            "FZTK",
+            metadataUri_,
+            usdcAmountIn,
+            expectedQuote.tokenAmountOut,
+            block.timestamp,
+            recipient
         );
 
         assertEq(launchId, 1);
@@ -1180,7 +1296,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         _assertCurveStateEq(LaunchPool(payable(launchPool)).curveState(), expectedQuote.nextState);
     }
 
-    function testFuzz_ThresholdCrossingCreateLaunchAndBuyRevertsAtomically(uint256 usdcAmountIn) public {
+    function testFuzz_ThresholdCrossingCreateLaunchAndBuyRevertsAtomically(uint256 usdcAmountIn)
+        public
+    {
         LaunchFactory thresholdFactory = _deployFactory(
             INITIAL_ADMIN,
             ADMIN_TRANSFER_DELAY,
@@ -1203,10 +1321,18 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(CREATOR);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, 50_000)
+            abi.encodeWithSelector(
+                LaunchPool.GraduationThresholdExceeded.selector, uint256(0), usdcAmountIn, 50_000
+            )
         );
         thresholdFactory.createLaunchAndBuy(
-            "Threshold Fuzz", "TFZ", "ipfs://launch/threshold-fuzz", usdcAmountIn, 1, block.timestamp, CREATOR
+            "Threshold Fuzz",
+            "TFZ",
+            "ipfs://launch/threshold-fuzz",
+            usdcAmountIn,
+            1,
+            block.timestamp,
+            CREATOR
         );
 
         assertEq(thresholdFactory.launchCount(), 0);
@@ -1221,8 +1347,10 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         firstUsdcAmountIn = bound(firstUsdcAmountIn, 1, 500_000);
         secondUsdcAmountIn = bound(secondUsdcAmountIn, 1, 500_000);
 
-        BondingCurveMath.BuyQuote memory firstQuote = _expectedInitialBuyQuote(factory, firstUsdcAmountIn);
-        BondingCurveMath.BuyQuote memory secondQuote = _expectedInitialBuyQuote(factory, secondUsdcAmountIn);
+        BondingCurveMath.BuyQuote memory firstQuote =
+            _expectedInitialBuyQuote(factory, firstUsdcAmountIn);
+        BondingCurveMath.BuyQuote memory secondQuote =
+            _expectedInitialBuyQuote(factory, secondUsdcAmountIn);
 
         quoteAsset.mint(CREATOR, firstUsdcAmountIn + secondUsdcAmountIn);
 
@@ -1257,7 +1385,10 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(quoteAsset.allowance(address(factory), secondPool), 0);
     }
 
-    function testFuzz_UnauthorizedCallersCannotUsePoolPauseManagement(address caller, uint8 operation) public {
+    function testFuzz_UnauthorizedCallersCannotUsePoolPauseManagement(
+        address caller,
+        uint8 operation
+    ) public {
         vm.assume(caller != INITIAL_ADMIN);
 
         vm.prank(CREATOR);
@@ -1270,7 +1401,9 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         vm.prank(caller);
         vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, pauserRole)
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, caller, pauserRole
+            )
         );
 
         uint8 selectedOperation = operation % 4;
@@ -1292,12 +1425,15 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(uint256(pool.status()), uint256(LaunchPool.PoolStatus.Active));
     }
 
-    function testFuzz_RegisteredPoolPauseSequencesMaintainIndependentState(uint8 firstSequence, uint8 secondSequence)
-        public
-    {
+    function testFuzz_RegisteredPoolPauseSequencesMaintainIndependentState(
+        uint8 firstSequence,
+        uint8 secondSequence
+    ) public {
         vm.startPrank(CREATOR);
-        (, address firstPoolAddress,) = factory.createLaunch("First Pool", "FST", "ipfs://launch/first-pool");
-        (, address secondPoolAddress,) = factory.createLaunch("Second Pool", "SND", "ipfs://launch/second-pool");
+        (, address firstPoolAddress,) =
+            factory.createLaunch("First Pool", "FST", "ipfs://launch/first-pool");
+        (, address secondPoolAddress,) =
+            factory.createLaunch("Second Pool", "SND", "ipfs://launch/second-pool");
         vm.stopPrank();
 
         LaunchPool firstPool = LaunchPool(payable(firstPoolAddress));
@@ -1383,7 +1519,11 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         );
     }
 
-    function _alphanumericString(bytes32 seed, uint256 length) internal pure returns (string memory) {
+    function _alphanumericString(bytes32 seed, uint256 length)
+        internal
+        pure
+        returns (string memory)
+    {
         bytes memory alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         bytes memory output = new bytes(length);
         bytes32 current = seed;
@@ -1398,7 +1538,11 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         return string(output);
     }
 
-    function _repeatChar(string memory char_, uint256 length) internal pure returns (string memory) {
+    function _repeatChar(string memory char_, uint256 length)
+        internal
+        pure
+        returns (string memory)
+    {
         bytes memory output = new bytes(length);
         bytes1 value = bytes(char_)[0];
 
@@ -1419,7 +1563,11 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         }
     }
 
-    function _applyPoolPauseSequence(LaunchFactory targetFactory, address poolAddress, uint8 sequence) internal {
+    function _applyPoolPauseSequence(
+        LaunchFactory targetFactory,
+        address poolAddress,
+        uint8 sequence
+    ) internal {
         vm.startPrank(INITIAL_ADMIN);
 
         if (sequence & 0x01 != 0) {
@@ -1478,21 +1626,23 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertTrue(token.transfer(address(pool), token.FIXED_SUPPLY()));
         pool.initialize();
 
-        BondingCurveMath.BuyQuote memory expectedQuote = _expectedInitialBuyQuote(factory, usdcAmountIn);
+        BondingCurveMath.BuyQuote memory expectedQuote =
+            _expectedInitialBuyQuote(factory, usdcAmountIn);
         quoteAsset.mint(buyer, usdcAmountIn);
 
         vm.prank(buyer);
         quoteAsset.approve(address(pool), usdcAmountIn);
 
         vm.prank(buyer);
-        tokenAmountOut = pool.buy(usdcAmountIn, expectedQuote.tokenAmountOut, block.timestamp, recipient);
+        tokenAmountOut =
+            pool.buy(usdcAmountIn, expectedQuote.tokenAmountOut, block.timestamp, recipient);
         state = pool.curveState();
     }
 
-    function _assertCurveStateEq(BondingCurveMath.CurveState memory left, BondingCurveMath.CurveState memory right)
-        internal
-        pure
-    {
+    function _assertCurveStateEq(
+        BondingCurveMath.CurveState memory left,
+        BondingCurveMath.CurveState memory right
+    ) internal pure {
         assertEq(left.realUsdcReserve, right.realUsdcReserve);
         assertEq(left.realTokenReserve, right.realTokenReserve);
         assertEq(left.virtualUsdcReserve, right.virtualUsdcReserve);
@@ -1501,8 +1651,12 @@ contract LaunchFactoryTest is Test, IERC20Errors {
     }
 
     function _assertEmptyLaunchRecord(LaunchFactory targetFactory, uint256 launchId) internal view {
-        (address creatorRecord, address tokenRecord, address poolRecord, bytes32 metadataHashRecord) =
-            targetFactory.launchById(launchId);
+        (
+            address creatorRecord,
+            address tokenRecord,
+            address poolRecord,
+            bytes32 metadataHashRecord
+        ) = targetFactory.launchById(launchId);
         assertEq(creatorRecord, address(0));
         assertEq(tokenRecord, address(0));
         assertEq(poolRecord, address(0));
@@ -1566,7 +1720,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
 
         for (uint256 i = 0; i < logs.length; ++i) {
             if (
-                logs[i].emitter == address(factory) && logs[i].topics.length == 4 && logs[i].topics[0] == eventSignature
+                logs[i].emitter == address(factory) && logs[i].topics.length == 4
+                    && logs[i].topics[0] == eventSignature
             ) {
                 assertEq(uint256(logs[i].topics[1]), expectedLaunchId);
                 assertEq(address(uint160(uint256(logs[i].topics[2]))), expectedCreator);
@@ -1585,9 +1740,11 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         fail("CreatorInitialPurchaseExecuted event not found");
     }
 
-    function _assertGraduationPendingLog(Vm.Log[] memory logs, address expectedLaunchPool, uint256 expectedThreshold)
-        internal
-    {
+    function _assertGraduationPendingLog(
+        Vm.Log[] memory logs,
+        address expectedLaunchPool,
+        uint256 expectedThreshold
+    ) internal {
         bytes32 eventSignature = keccak256("GraduationPendingEntered(uint256,uint256)");
 
         for (uint256 i = 0; i < logs.length; ++i) {
@@ -1595,7 +1752,8 @@ contract LaunchFactoryTest is Test, IERC20Errors {
                 logs[i].emitter == expectedLaunchPool && logs[i].topics.length == 1
                     && logs[i].topics[0] == eventSignature
             ) {
-                (uint256 realUsdcReserve_, uint256 graduationThreshold_) = abi.decode(logs[i].data, (uint256, uint256));
+                (uint256 realUsdcReserve_, uint256 graduationThreshold_) =
+                    abi.decode(logs[i].data, (uint256, uint256));
                 assertEq(realUsdcReserve_, expectedThreshold);
                 assertEq(graduationThreshold_, expectedThreshold);
                 return;

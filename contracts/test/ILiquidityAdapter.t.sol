@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Test} from "forge-std/Test.sol";
+import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { Test } from "forge-std/Test.sol";
 
-import {ILiquidityAdapter} from "../src/interfaces/ILiquidityAdapter.sol";
-import {MockLiquidityAdapter} from "./mocks/MockLiquidityAdapter.sol";
+import { ILiquidityAdapter } from "../src/interfaces/ILiquidityAdapter.sol";
+import { MockLiquidityAdapter } from "./mocks/MockLiquidityAdapter.sol";
 
 contract MockMigrationToken is ERC20 {
-    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
+    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) { }
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -115,14 +115,18 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
         quoteAsset.approve(address(adapter), 1);
 
         vm.expectRevert(MockLiquidityAdapter.MockLiquidityAdapterInvalidLaunchToken.selector);
-        adapterInterface.migrateLiquidity(address(0), address(quoteAsset), 1, 1, LIQUIDITY_RECIPIENT);
+        adapterInterface.migrateLiquidity(
+            address(0), address(quoteAsset), 1, 1, LIQUIDITY_RECIPIENT
+        );
     }
 
     function test_ZeroQuoteAssetReverts() public {
         launchToken.approve(address(adapter), 1);
 
         vm.expectRevert(MockLiquidityAdapter.MockLiquidityAdapterInvalidQuoteAsset.selector);
-        adapterInterface.migrateLiquidity(address(launchToken), address(0), 1, 1, LIQUIDITY_RECIPIENT);
+        adapterInterface.migrateLiquidity(
+            address(launchToken), address(0), 1, 1, LIQUIDITY_RECIPIENT
+        );
     }
 
     function test_ZeroLaunchTokenAmountReverts() public {
@@ -130,7 +134,9 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
         quoteAsset.approve(address(adapter), 1);
 
         vm.expectRevert(MockLiquidityAdapter.MockLiquidityAdapterInvalidLaunchTokenAmount.selector);
-        adapterInterface.migrateLiquidity(address(launchToken), address(quoteAsset), 0, 1, LIQUIDITY_RECIPIENT);
+        adapterInterface.migrateLiquidity(
+            address(launchToken), address(quoteAsset), 0, 1, LIQUIDITY_RECIPIENT
+        );
     }
 
     function test_ZeroQuoteAssetAmountReverts() public {
@@ -138,7 +144,9 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
         quoteAsset.approve(address(adapter), 1);
 
         vm.expectRevert(MockLiquidityAdapter.MockLiquidityAdapterInvalidQuoteAssetAmount.selector);
-        adapterInterface.migrateLiquidity(address(launchToken), address(quoteAsset), 1, 0, LIQUIDITY_RECIPIENT);
+        adapterInterface.migrateLiquidity(
+            address(launchToken), address(quoteAsset), 1, 0, LIQUIDITY_RECIPIENT
+        );
     }
 
     function test_ZeroLiquidityRecipientReverts() public {
@@ -146,13 +154,18 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
         quoteAsset.approve(address(adapter), 1);
 
         vm.expectRevert(MockLiquidityAdapter.MockLiquidityAdapterInvalidLiquidityRecipient.selector);
-        adapterInterface.migrateLiquidity(address(launchToken), address(quoteAsset), 1, 1, address(0));
+        adapterInterface.migrateLiquidity(
+            address(launchToken), address(quoteAsset), 1, 1, address(0)
+        );
     }
 
     function test_MissingAllowanceReverts() public {
         vm.expectRevert(
             abi.encodeWithSelector(
-                ERC20InsufficientAllowance.selector, address(adapter), uint256(0), uint256(100 ether)
+                ERC20InsufficientAllowance.selector,
+                address(adapter),
+                uint256(0),
+                uint256(100 ether)
             )
         );
         adapterInterface.migrateLiquidity(
@@ -169,11 +182,18 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                ERC20InsufficientBalance.selector, address(this), INITIAL_LAUNCH_TOKEN_BALANCE, launchTokenAmount
+                ERC20InsufficientBalance.selector,
+                address(this),
+                INITIAL_LAUNCH_TOKEN_BALANCE,
+                launchTokenAmount
             )
         );
         adapterInterface.migrateLiquidity(
-            address(launchToken), address(quoteAsset), launchTokenAmount, quoteAssetAmount, LIQUIDITY_RECIPIENT
+            address(launchToken),
+            address(quoteAsset),
+            launchTokenAmount,
+            quoteAssetAmount,
+            LIQUIDITY_RECIPIENT
         );
     }
 
@@ -236,7 +256,9 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
         assertEq(quoteAsset.totalSupply(), quoteAssetSupplyBefore);
     }
 
-    function testFuzz_ValidMigrationAmounts(uint256 launchTokenAmount, uint256 quoteAssetAmount) public {
+    function testFuzz_ValidMigrationAmounts(uint256 launchTokenAmount, uint256 quoteAssetAmount)
+        public
+    {
         launchTokenAmount = bound(launchTokenAmount, 1, INITIAL_LAUNCH_TOKEN_BALANCE);
         quoteAssetAmount = bound(quoteAssetAmount, 1, INITIAL_QUOTE_ASSET_BALANCE);
 
@@ -246,8 +268,12 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
         bytes32 migrationId = _migrate(launchTokenAmount, quoteAssetAmount);
 
         assertTrue(migrationId != bytes32(0));
-        assertEq(launchToken.balanceOf(address(this)), INITIAL_LAUNCH_TOKEN_BALANCE - launchTokenAmount);
-        assertEq(quoteAsset.balanceOf(address(this)), INITIAL_QUOTE_ASSET_BALANCE - quoteAssetAmount);
+        assertEq(
+            launchToken.balanceOf(address(this)), INITIAL_LAUNCH_TOKEN_BALANCE - launchTokenAmount
+        );
+        assertEq(
+            quoteAsset.balanceOf(address(this)), INITIAL_QUOTE_ASSET_BALANCE - quoteAssetAmount
+        );
         assertEq(launchToken.balanceOf(address(adapter)), launchTokenAmount);
         assertEq(quoteAsset.balanceOf(address(adapter)), quoteAssetAmount);
         assertEq(adapter.lastLaunchTokenAmount(), launchTokenAmount);
@@ -256,12 +282,19 @@ contract ILiquidityAdapterTest is Test, IERC20Errors {
         assertEq(quoteAsset.totalSupply(), quoteAssetSupplyBefore);
     }
 
-    function _migrate(uint256 launchTokenAmount, uint256 quoteAssetAmount) internal returns (bytes32 migrationId) {
+    function _migrate(uint256 launchTokenAmount, uint256 quoteAssetAmount)
+        internal
+        returns (bytes32 migrationId)
+    {
         launchToken.approve(address(adapter), launchTokenAmount);
         quoteAsset.approve(address(adapter), quoteAssetAmount);
 
         migrationId = adapterInterface.migrateLiquidity(
-            address(launchToken), address(quoteAsset), launchTokenAmount, quoteAssetAmount, LIQUIDITY_RECIPIENT
+            address(launchToken),
+            address(quoteAsset),
+            launchTokenAmount,
+            quoteAssetAmount,
+            LIQUIDITY_RECIPIENT
         );
     }
 }

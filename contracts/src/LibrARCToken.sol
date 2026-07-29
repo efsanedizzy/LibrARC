@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title LibrARCToken
 /// @notice Fixed-supply ERC-20 token used by the LibrARC launch protocol MVP.
@@ -22,7 +22,9 @@ contract LibrARCToken is ERC20 {
     /// @param name_ The ERC-20 token name.
     /// @param symbol_ The ERC-20 token symbol.
     /// @param initialHolder_ The address that receives the full fixed supply.
-    constructor(string memory name_, string memory symbol_, address initialHolder_) ERC20(name_, symbol_) {
+    constructor(string memory name_, string memory symbol_, address initialHolder_)
+        ERC20(name_, symbol_)
+    {
         if (bytes(name_).length == 0) revert LibrARCTokenEmptyName();
         if (bytes(symbol_).length == 0) revert LibrARCTokenEmptySymbol();
         if (initialHolder_ == address(0)) revert LibrARCTokenInvalidInitialHolder();
