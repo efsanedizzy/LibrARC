@@ -261,15 +261,58 @@ Rules:
 Fee sweeping requirements:
 
 - fees accrue inside `accruedProtocolFees`
+- `accruedProtocolFees` represents protocol-owned Arc USDC only
+- `accruedProtocolFees` is excluded from `realUsdcReserve`
+- `accruedProtocolFees` never affects bonding-curve pricing
+- `accruedProtocolFees` never affects graduation eligibility
 - fee sweeping must never reduce `realUsdcReserve`
+- fee sweeping must never alter `realTokenReserve`
+- fee sweeping must never alter `virtualUsdcReserve`
+- fee sweeping must never alter `virtualTokenReserve`
+- fee sweeping must never alter pool status
+- fee sweeping must never alter graduation eligibility
 - sweep amount must not exceed `accruedProtocolFees`
+- the complete `accruedProtocolFees` balance is swept in MVP
+- partial fee sweeping is not supported in MVP
+- any address may trigger fee sweeping
+- no creator, administrator, pauser, or protocol role is required
+- fee sweeping is allowed while the pool is `Active`, `GraduationPending`, or `Graduated`
+- fee sweeping is not allowed before initialization
+- the recipient is always the immutable configured `FeeVault`
+- the caller cannot choose the recipient
+- the caller receives no reward or fee
+- sweeping zero protocol fees must revert
 - `accruedProtocolFees` must be reduced before the external transfer
 - fee transfers may only go to the configured `FeeVault`
+- the pool must never approve the `FeeVault`
 - failed fee transfer must revert the complete sweep
 - graduation migrates only `realUsdcReserve` and `realTokenReserve`
 - `accruedProtocolFees` remain protocol-owned and excluded from migration
 - fee sweeping cannot change quotes
 - fee sweeping cannot change graduation eligibility
+- direct Arc USDC donations are not sweepable
+- only the internally accounted `accruedProtocolFees` amount is transferred
+- a balance deficit is a critical invariant violation and must revert
+- failed sweeping must leave all state and balances unchanged
+
+Conceptual `sweepProtocolFees()` flow:
+
+1. Validate the pool is initialized.
+2. Read `feeAmount = accruedProtocolFees`.
+3. Revert when `feeAmount` is zero.
+4. Verify the actual Arc USDC balance covers `realUsdcReserve + accruedProtocolFees`.
+5. Set `accruedProtocolFees = 0` before the external transfer.
+6. Transfer exactly `feeAmount` of Arc USDC to the immutable `FeeVault` using `SafeERC20`.
+7. Verify the Arc USDC balance decreased by exactly `feeAmount`.
+8. Verify `realUsdcReserve` is unchanged.
+9. Emit `ProtocolFeesSwept`.
+
+Conceptual error categories for fee sweeping:
+
+- `NoProtocolFees`
+- `InsufficientQuoteAssetBalance`
+- `ProtocolFeeSweepBalanceMismatch`
+- `PoolNotInitialized`
 
 ## 9. Rounding Rules
 
@@ -332,6 +375,7 @@ General requirements:
   - `balanceOf(pool, launchToken) >= realTokenReserve`
 - balances above accounted values are donations or excess balances
 - balances below accounted values are critical invariant violations
+- direct donations cannot satisfy balance deficits in internal accounting semantics
 
 ## 11. Quote-Function Requirements
 
@@ -452,7 +496,15 @@ Additional derived invariants:
 - if `fee > 0`, then `accruedProtocolFees_next > accruedProtocolFees`
 - `effectiveUsdcReserve` and `effectiveTokenReserve` remain strictly positive if initialization parameters are valid
 - fee sweeping cannot change quotes
+- fee sweeping does not change `realUsdcReserve`
+- fee sweeping does not change `realTokenReserve`
+- fee sweeping does not change effective reserves
 - fee sweeping cannot change graduation eligibility
+- fee sweeping cannot change graduation capacity
+- the amount sent to `FeeVault` equals the prior `accruedProtocolFees` exactly
+- after a successful complete sweep, `accruedProtocolFees` equals zero
+- direct donations remain in the pool after fee sweeping
+- the actual Arc USDC balance continues to cover `realUsdcReserve` after fee sweeping
 - if `nextRealUsdcReserve > graduationThreshold`, the buy reverts before any asset transfer or state change
 
 ## 15. Security Requirements
@@ -484,16 +536,30 @@ Deterministic tests must cover at minimum:
 - buy state updates
 - sell state updates
 - fee sweep accounting
+- sweeping fees while `Active`
+- sweeping fees while `GraduationPending`
+- sweeping fees while `Graduated`
+- sweeping before initialization reverting
 - zero-input buy rejection
 - zero-input sell rejection
 - zero net buy input after fee rejection
 - zero-output buy rejection
 - zero-output sell rejection
 - `feeBps` equal to or above `10_000` reverting
+- exact transfer of protocol fees to `FeeVault`
+- permissionless caller success for fee sweeping
+- caller receiving nothing from fee sweeping
+- real reserves remaining unchanged after fee sweeping
+- virtual reserves remaining unchanged after fee sweeping
+- graduation capacity remaining unchanged after fee sweeping
+- failed token transfer rolling back the complete fee sweep
+- repeated sweep after a complete sweep reverting
+- quote results remaining identical before and after sweeping
 - rejection when buy output exceeds `realTokenReserve`
 - rejection when gross sell output exceeds `realUsdcReserve`
 - pool balances always covering accounted reserves
 - donation balances remaining excluded from pricing and accounting
+- donations remaining untouched by fee sweeping
 - graduation threshold uses `realUsdcReserve` only
 - graduation ignores `accruedProtocolFees`
 - threshold-exceeding buys reverting without side effects
@@ -511,6 +577,10 @@ Fuzz tests must cover:
 - donation scenarios that change raw balances but not internal accounting
 - pool balance coverage over accounted reserves
 - fee sweep state transitions
+- permissionless fee sweeping across allowed pool states
+- insufficient actual Arc USDC balance reverting fee sweeping
+- donations remaining excluded from sweeped amounts
+- quote stability before and after fee sweeping
 - repeated buy and sell sequences with invariant checks after every step
 - boundary cases where outputs approach zero
 - boundary cases where net inputs approach zero because of fee configuration
@@ -534,7 +604,12 @@ Invariant tests must prove at minimum:
 - direct donations do not alter pricing
 - direct donations do not alter graduation eligibility
 - fee sweeping does not alter quotes
+- fee sweeping does not alter `realUsdcReserve`
+- fee sweeping does not alter `realTokenReserve`
+- fee sweeping does not alter effective reserves
 - fee sweeping does not alter graduation eligibility
+- fee sweeping leaves donation balances excluded from internal accounting
+- actual Arc USDC balance covers `realUsdcReserve` after successful fee sweeping
 - zero-output transactions never succeed
 - total launch-token supply remains constant across all completed trades
 - once the pool enters `GraduationPending`, all trades revert
@@ -552,7 +627,6 @@ The following parameters remain unresolved and block final BondingCurve implemen
 - minimum Arc USDC trade
 - minimum token trade
 - graduation asset proportions and destinations
-- fee sweep timing and frequency
 - whether excess token balances are permanently locked or narrowly recoverable
 
 This document does not invent numerical values for any of those items.
