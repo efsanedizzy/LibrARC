@@ -25,6 +25,12 @@ contract DeployArcTestnet is Script {
     error ArcTestnetQuoteAssetMissingCode(address quoteAsset);
     error ArcTestnetLiquidityAdapterMissingCode(address liquidityAdapter);
     error ArcTestnetQuoteAssetInvalidDecimals(uint8 actualDecimals);
+    error ArcTestnetFactoryDefaultAdminMismatch(address expectedAdmin, address actualAdmin);
+    error ArcTestnetFactoryMissingDefaultAdminRole(address admin);
+    error ArcTestnetFactoryMissingPauserRole(address admin);
+    error ArcTestnetFactoryPauserRoleAdminMismatch(
+        bytes32 expectedAdminRole, bytes32 actualAdminRole
+    );
     error ArcTestnetDeploymentValidationFailed(string checkName);
 
     uint256 public constant ARC_TESTNET_CHAIN_ID = 5_042_002;
@@ -204,14 +210,21 @@ contract DeployArcTestnet is Script {
             revert ArcTestnetDeploymentValidationFailed("feeVault withdrawer role");
         }
 
-        if (launchFactory.defaultAdmin() != config.admin) {
-            revert ArcTestnetDeploymentValidationFailed("launchFactory admin");
+        address actualFactoryAdmin = launchFactory.defaultAdmin();
+        if (actualFactoryAdmin != config.admin) {
+            revert ArcTestnetFactoryDefaultAdminMismatch(config.admin, actualFactoryAdmin);
         }
         if (!launchFactory.hasRole(launchFactory.DEFAULT_ADMIN_ROLE(), config.admin)) {
-            revert ArcTestnetDeploymentValidationFailed("launchFactory default admin role");
+            revert ArcTestnetFactoryMissingDefaultAdminRole(config.admin);
         }
         if (!launchFactory.hasRole(launchFactory.PAUSER_ROLE(), config.admin)) {
-            revert ArcTestnetDeploymentValidationFailed("launchFactory pauser role");
+            revert ArcTestnetFactoryMissingPauserRole(config.admin);
+        }
+        bytes32 pauserRoleAdmin = launchFactory.getRoleAdmin(launchFactory.PAUSER_ROLE());
+        if (pauserRoleAdmin != launchFactory.DEFAULT_ADMIN_ROLE()) {
+            revert ArcTestnetFactoryPauserRoleAdminMismatch(
+                launchFactory.DEFAULT_ADMIN_ROLE(), pauserRoleAdmin
+            );
         }
         if (launchFactory.quoteAsset() != quoteAsset) {
             revert ArcTestnetDeploymentValidationFailed("launchFactory quote asset");

@@ -2,6 +2,9 @@
 pragma solidity 0.8.26;
 
 import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {
+    IAccessControlDefaultAdminRules
+} from "@openzeppelin/contracts/access/extensions/IAccessControlDefaultAdminRules.sol";
 import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -142,11 +145,19 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         assertEq(factory.maxMetadataUriLength(), DEFAULT_MAX_METADATA_URI_LENGTH);
         assertTrue(factory.hasRole(factory.DEFAULT_ADMIN_ROLE(), INITIAL_ADMIN));
         assertTrue(factory.hasRole(factory.PAUSER_ROLE(), INITIAL_ADMIN));
+        assertEq(factory.getRoleAdmin(factory.PAUSER_ROLE()), factory.DEFAULT_ADMIN_ROLE());
         assertFalse(factory.hasRole(factory.PAUSER_ROLE(), CREATOR));
+        assertFalse(factory.hasRole(factory.DEFAULT_ADMIN_ROLE(), address(this)));
+        assertFalse(factory.hasRole(factory.PAUSER_ROLE(), address(this)));
     }
 
     function test_RevertWhenInitialAdminIsZero() public {
-        vm.expectRevert(LaunchFactory.ZeroAdmin.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControlDefaultAdminRules.AccessControlInvalidDefaultAdmin.selector,
+                address(0)
+            )
+        );
         _deployFactory(
             address(0),
             ADMIN_TRANSFER_DELAY,
@@ -560,6 +571,71 @@ contract LaunchFactoryTest is Test, IERC20Errors {
         vm.prank(INITIAL_ADMIN);
         factory.unpauseLaunchCreation();
         assertFalse(factory.paused());
+    }
+
+    function test_InitialAdminCanGrantAndRevokePauserRole() public {
+        bytes32 pauserRole = factory.PAUSER_ROLE();
+
+        vm.prank(INITIAL_ADMIN);
+        factory.grantRole(pauserRole, OTHER_ACCOUNT);
+        assertTrue(factory.hasRole(pauserRole, OTHER_ACCOUNT));
+
+        vm.prank(INITIAL_ADMIN);
+        factory.revokeRole(pauserRole, OTHER_ACCOUNT);
+        assertFalse(factory.hasRole(pauserRole, OTHER_ACCOUNT));
+    }
+
+    function test_UnauthorizedCallerCannotGrantPauserRole() public {
+        bytes32 pauserRole = factory.PAUSER_ROLE();
+        bytes32 defaultAdminRole = factory.DEFAULT_ADMIN_ROLE();
+
+        vm.prank(OTHER_ACCOUNT);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                OTHER_ACCOUNT,
+                defaultAdminRole
+            )
+        );
+        factory.grantRole(pauserRole, OTHER_ACCOUNT);
+    }
+
+    function test_DefaultAdminTransferRemainsDelayedAndTwoStep() public {
+        vm.prank(INITIAL_ADMIN);
+        factory.beginDefaultAdminTransfer(OTHER_ACCOUNT);
+
+        (address pendingAdmin, uint48 acceptSchedule) = factory.pendingDefaultAdmin();
+        assertEq(pendingAdmin, OTHER_ACCOUNT);
+        assertEq(acceptSchedule, uint48(block.timestamp + ADMIN_TRANSFER_DELAY));
+        assertEq(factory.defaultAdmin(), INITIAL_ADMIN);
+        assertTrue(factory.hasRole(factory.DEFAULT_ADMIN_ROLE(), INITIAL_ADMIN));
+        assertFalse(factory.hasRole(factory.DEFAULT_ADMIN_ROLE(), OTHER_ACCOUNT));
+
+        vm.prank(OTHER_ACCOUNT);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControlDefaultAdminRules.AccessControlEnforcedDefaultAdminDelay.selector,
+                acceptSchedule
+            )
+        );
+        factory.acceptDefaultAdminTransfer();
+
+        vm.warp(uint256(acceptSchedule) + 1);
+        vm.roll(block.number + 1);
+
+        vm.prank(OTHER_ACCOUNT);
+        factory.acceptDefaultAdminTransfer();
+
+        assertEq(factory.defaultAdmin(), OTHER_ACCOUNT);
+        assertTrue(factory.hasRole(factory.DEFAULT_ADMIN_ROLE(), OTHER_ACCOUNT));
+        assertFalse(factory.hasRole(factory.DEFAULT_ADMIN_ROLE(), INITIAL_ADMIN));
+        assertTrue(factory.hasRole(factory.PAUSER_ROLE(), INITIAL_ADMIN));
+        assertEq(factory.getRoleAdmin(factory.PAUSER_ROLE()), factory.DEFAULT_ADMIN_ROLE());
+
+        bytes32 pauserRole = factory.PAUSER_ROLE();
+        vm.prank(OTHER_ACCOUNT);
+        factory.grantRole(pauserRole, CREATOR);
+        assertTrue(factory.hasRole(pauserRole, CREATOR));
     }
 
     function test_UnauthorizedCallerCannotPause() public {

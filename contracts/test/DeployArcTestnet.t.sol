@@ -26,6 +26,134 @@ contract MockReviewedLiquidityAdapter {
     }
 }
 
+contract MockLaunchFactoryRoleValidationTarget {
+    bytes32 private constant _DEFAULT_ADMIN_ROLE = 0x00;
+    bytes32 private constant _PAUSER_ROLE = keccak256("PAUSER_ROLE");
+
+    address private immutable _defaultAdmin;
+    address private immutable _quoteAsset;
+    address private immutable _feeVault;
+    address private immutable _liquidityAdapter;
+    address private immutable _liquidityRecipient;
+    uint256 private immutable _virtualUsdcReserve;
+    uint256 private immutable _virtualTokenReserve;
+    uint256 private immutable _buyFeeBps;
+    uint256 private immutable _sellFeeBps;
+    uint256 private immutable _graduationThreshold;
+    uint256 private immutable _maxMetadataUriLength;
+    bool private immutable _hasDefaultAdminRole;
+    bool private immutable _hasPauserRole;
+    bytes32 private immutable _pauserRoleAdmin;
+
+    constructor(
+        address defaultAdmin_,
+        address quoteAsset_,
+        address feeVault_,
+        address liquidityAdapter_,
+        address liquidityRecipient_,
+        uint256 virtualUsdcReserve_,
+        uint256 virtualTokenReserve_,
+        uint256 buyFeeBps_,
+        uint256 sellFeeBps_,
+        uint256 graduationThreshold_,
+        uint256 maxMetadataUriLength_,
+        bool hasDefaultAdminRole_,
+        bool hasPauserRole_,
+        bytes32 pauserRoleAdmin_
+    ) {
+        _defaultAdmin = defaultAdmin_;
+        _quoteAsset = quoteAsset_;
+        _feeVault = feeVault_;
+        _liquidityAdapter = liquidityAdapter_;
+        _liquidityRecipient = liquidityRecipient_;
+        _virtualUsdcReserve = virtualUsdcReserve_;
+        _virtualTokenReserve = virtualTokenReserve_;
+        _buyFeeBps = buyFeeBps_;
+        _sellFeeBps = sellFeeBps_;
+        _graduationThreshold = graduationThreshold_;
+        _maxMetadataUriLength = maxMetadataUriLength_;
+        _hasDefaultAdminRole = hasDefaultAdminRole_;
+        _hasPauserRole = hasPauserRole_;
+        _pauserRoleAdmin = pauserRoleAdmin_;
+    }
+
+    function defaultAdmin() external view returns (address) {
+        return _defaultAdmin;
+    }
+
+    function hasRole(bytes32 role, address account) external view returns (bool) {
+        if (account != _defaultAdmin) {
+            return false;
+        }
+        if (role == _DEFAULT_ADMIN_ROLE) {
+            return _hasDefaultAdminRole;
+        }
+        if (role == _PAUSER_ROLE) {
+            return _hasPauserRole;
+        }
+        return false;
+    }
+
+    function DEFAULT_ADMIN_ROLE() external pure returns (bytes32) {
+        return _DEFAULT_ADMIN_ROLE;
+    }
+
+    function PAUSER_ROLE() external pure returns (bytes32) {
+        return _PAUSER_ROLE;
+    }
+
+    function getRoleAdmin(bytes32 role) external view returns (bytes32) {
+        if (role == _PAUSER_ROLE) {
+            return _pauserRoleAdmin;
+        }
+        return _DEFAULT_ADMIN_ROLE;
+    }
+
+    function quoteAsset() external view returns (address) {
+        return _quoteAsset;
+    }
+
+    function feeVault() external view returns (address) {
+        return _feeVault;
+    }
+
+    function liquidityAdapter() external view returns (address) {
+        return _liquidityAdapter;
+    }
+
+    function liquidityRecipient() external view returns (address) {
+        return _liquidityRecipient;
+    }
+
+    function virtualUsdcReserve() external view returns (uint256) {
+        return _virtualUsdcReserve;
+    }
+
+    function virtualTokenReserve() external view returns (uint256) {
+        return _virtualTokenReserve;
+    }
+
+    function buyFeeBps() external view returns (uint256) {
+        return _buyFeeBps;
+    }
+
+    function sellFeeBps() external view returns (uint256) {
+        return _sellFeeBps;
+    }
+
+    function graduationThreshold() external view returns (uint256) {
+        return _graduationThreshold;
+    }
+
+    function maxMetadataUriLength() external view returns (uint256) {
+        return _maxMetadataUriLength;
+    }
+
+    function launchCount() external pure returns (uint256) {
+        return 0;
+    }
+}
+
 contract DeployArcTestnetHarness is DeployArcTestnet {
     function deployWithExplicitConfig(address quoteAsset, DeploymentConfig memory config)
         external
@@ -53,6 +181,14 @@ contract DeployArcTestnetHarness is DeployArcTestnet {
 
     function exposedValidateLiquidityAdapter(address liquidityAdapter) external view {
         _validateLiquidityAdapter(liquidityAdapter);
+    }
+
+    function exposedValidateDeploymentResult(
+        DeploymentResult memory result,
+        DeploymentConfig memory config,
+        address quoteAsset
+    ) external view {
+        _validateDeploymentResult(result, config, quoteAsset);
     }
 }
 
@@ -263,6 +399,10 @@ contract DeployArcTestnetTest is Test {
         assertEq(launchFactory.defaultAdmin(), config.admin);
         assertTrue(launchFactory.hasRole(launchFactory.DEFAULT_ADMIN_ROLE(), config.admin));
         assertTrue(launchFactory.hasRole(launchFactory.PAUSER_ROLE(), config.admin));
+        assertEq(
+            launchFactory.getRoleAdmin(launchFactory.PAUSER_ROLE()),
+            launchFactory.DEFAULT_ADMIN_ROLE()
+        );
         assertEq(launchFactory.quoteAsset(), address(quoteAsset));
         assertEq(launchFactory.feeVault(), result.feeVault);
         assertEq(launchFactory.liquidityAdapter(), address(liquidityAdapter));
@@ -276,8 +416,152 @@ contract DeployArcTestnetTest is Test {
         assertEq(launchFactory.launchCount(), 0);
 
         assertEq(quoteAsset.balanceOf(address(this)), 0);
+        assertFalse(launchFactory.hasRole(launchFactory.DEFAULT_ADMIN_ROLE(), address(this)));
+        assertFalse(launchFactory.hasRole(launchFactory.PAUSER_ROLE(), address(this)));
         assertFalse(launchFactory.isLibrarcToken(address(this)));
         assertFalse(launchFactory.isLibrarcPool(address(this)));
+    }
+
+    function test_DeploymentValidationRejectsFactoryMissingDefaultAdminRole() public {
+        DeployArcTestnet.DeploymentConfig memory config = _defaultConfig();
+        FeeVault feeVault = new FeeVault(config.admin, config.treasury, config.adminTransferDelay);
+        MockLaunchFactoryRoleValidationTarget brokenFactory = new MockLaunchFactoryRoleValidationTarget(
+            config.admin,
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            config.liquidityRecipient,
+            config.virtualUsdcReserve,
+            config.virtualTokenReserve,
+            config.buyFeeBps,
+            config.sellFeeBps,
+            config.graduationThreshold,
+            config.maxMetadataUriLength,
+            false,
+            true,
+            bytes32(0)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployArcTestnet.ArcTestnetFactoryMissingDefaultAdminRole.selector, config.admin
+            )
+        );
+        harness.exposedValidateDeploymentResult(
+            _deploymentResult(
+                address(feeVault), address(brokenFactory), address(quoteAsset), config
+            ),
+            config,
+            address(quoteAsset)
+        );
+    }
+
+    function test_DeploymentValidationRejectsFactoryMissingPauserRole() public {
+        DeployArcTestnet.DeploymentConfig memory config = _defaultConfig();
+        FeeVault feeVault = new FeeVault(config.admin, config.treasury, config.adminTransferDelay);
+        MockLaunchFactoryRoleValidationTarget brokenFactory = new MockLaunchFactoryRoleValidationTarget(
+            config.admin,
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            config.liquidityRecipient,
+            config.virtualUsdcReserve,
+            config.virtualTokenReserve,
+            config.buyFeeBps,
+            config.sellFeeBps,
+            config.graduationThreshold,
+            config.maxMetadataUriLength,
+            true,
+            false,
+            bytes32(0)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployArcTestnet.ArcTestnetFactoryMissingPauserRole.selector, config.admin
+            )
+        );
+        harness.exposedValidateDeploymentResult(
+            _deploymentResult(
+                address(feeVault), address(brokenFactory), address(quoteAsset), config
+            ),
+            config,
+            address(quoteAsset)
+        );
+    }
+
+    function test_DeploymentValidationRejectsFactoryWithWrongPauserRoleAdmin() public {
+        DeployArcTestnet.DeploymentConfig memory config = _defaultConfig();
+        FeeVault feeVault = new FeeVault(config.admin, config.treasury, config.adminTransferDelay);
+        bytes32 wrongAdminRole = keccak256("WRONG_ADMIN_ROLE");
+        MockLaunchFactoryRoleValidationTarget brokenFactory = new MockLaunchFactoryRoleValidationTarget(
+            config.admin,
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            config.liquidityRecipient,
+            config.virtualUsdcReserve,
+            config.virtualTokenReserve,
+            config.buyFeeBps,
+            config.sellFeeBps,
+            config.graduationThreshold,
+            config.maxMetadataUriLength,
+            true,
+            true,
+            wrongAdminRole
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployArcTestnet.ArcTestnetFactoryPauserRoleAdminMismatch.selector,
+                bytes32(0),
+                wrongAdminRole
+            )
+        );
+        harness.exposedValidateDeploymentResult(
+            _deploymentResult(
+                address(feeVault), address(brokenFactory), address(quoteAsset), config
+            ),
+            config,
+            address(quoteAsset)
+        );
+    }
+
+    function test_DeploymentValidationRejectsFactoryWithWrongDefaultAdmin() public {
+        DeployArcTestnet.DeploymentConfig memory config = _defaultConfig();
+        FeeVault feeVault = new FeeVault(config.admin, config.treasury, config.adminTransferDelay);
+        address wrongAdmin = address(0xABCD);
+        MockLaunchFactoryRoleValidationTarget brokenFactory = new MockLaunchFactoryRoleValidationTarget(
+            wrongAdmin,
+            address(quoteAsset),
+            address(feeVault),
+            address(liquidityAdapter),
+            config.liquidityRecipient,
+            config.virtualUsdcReserve,
+            config.virtualTokenReserve,
+            config.buyFeeBps,
+            config.sellFeeBps,
+            config.graduationThreshold,
+            config.maxMetadataUriLength,
+            true,
+            true,
+            bytes32(0)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployArcTestnet.ArcTestnetFactoryDefaultAdminMismatch.selector,
+                config.admin,
+                wrongAdmin
+            )
+        );
+        harness.exposedValidateDeploymentResult(
+            _deploymentResult(
+                address(feeVault), address(brokenFactory), address(quoteAsset), config
+            ),
+            config,
+            address(quoteAsset)
+        );
     }
 
     function _defaultConfig() internal view returns (DeployArcTestnet.DeploymentConfig memory) {
@@ -293,6 +577,23 @@ contract DeployArcTestnetTest is Test {
             sellFeeBps: SELL_FEE_BPS,
             graduationThreshold: GRADUATION_THRESHOLD,
             maxMetadataUriLength: MAX_METADATA_URI_LENGTH
+        });
+    }
+
+    function _deploymentResult(
+        address feeVaultAddress,
+        address launchFactoryAddress,
+        address quoteAssetAddress,
+        DeployArcTestnet.DeploymentConfig memory config
+    ) internal pure returns (DeployArcTestnet.DeploymentResult memory) {
+        return DeployArcTestnet.DeploymentResult({
+            feeVault: feeVaultAddress,
+            launchFactory: launchFactoryAddress,
+            quoteAsset: quoteAssetAddress,
+            liquidityAdapter: config.liquidityAdapter,
+            admin: config.admin,
+            treasury: config.treasury,
+            liquidityRecipient: config.liquidityRecipient
         });
     }
 }

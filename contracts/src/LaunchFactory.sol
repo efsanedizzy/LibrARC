@@ -32,7 +32,6 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         bytes32 metadataHash;
     }
 
-    error ZeroAdmin();
     error ZeroAdminTransferDelay();
     error ZeroQuoteAsset();
     error ZeroFeeVault();
@@ -185,11 +184,8 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         uint256 sellFeeBps_,
         uint256 graduationThreshold_,
         uint256 maxMetadataUriLength_
-    )
-        AccessControlDefaultAdminRules(
-            _validateAdminTransferDelay(adminTransferDelay_), _validateInitialAdmin(initialAdmin_)
-        )
-    {
+    ) AccessControlDefaultAdminRules(adminTransferDelay_, initialAdmin_) {
+        if (adminTransferDelay_ == 0) revert ZeroAdminTransferDelay();
         if (quoteAsset_ == address(0)) revert ZeroQuoteAsset();
         if (feeVault_ == address(0)) revert ZeroFeeVault();
         if (liquidityAdapter_ == address(0)) revert ZeroLiquidityAdapter();
@@ -425,16 +421,6 @@ contract LaunchFactory is AccessControlDefaultAdminRules, Pausable, ReentrancyGu
         if (metadataUriLength > maxMetadataUriLength) {
             revert MetadataUriTooLong(metadataUriLength, maxMetadataUriLength);
         }
-    }
-
-    function _validateInitialAdmin(address initialAdmin_) private pure returns (address) {
-        if (initialAdmin_ == address(0)) revert ZeroAdmin();
-        return initialAdmin_;
-    }
-
-    function _validateAdminTransferDelay(uint48 adminTransferDelay_) private pure returns (uint48) {
-        if (adminTransferDelay_ == 0) revert ZeroAdminTransferDelay();
-        return adminTransferDelay_;
     }
 
     function _setPoolBuysPaused(address pool_, bool paused_) internal {
