@@ -1,9 +1,10 @@
 import { defineChain } from "viem";
 
-export const ARC_TESTNET_CHAIN_ID = 5042002;
-export const ARC_TESTNET_RPC_URL = "https://rpc.testnet.arc.network";
+import { ARC_TESTNET_CHAIN_ID, arcDeployment } from "../arc/config";
+
+export const ARC_TESTNET_RPC_URL = arcDeployment.rpcUrl;
 export const ARC_TESTNET_WS_URL = "wss://rpc.testnet.arc.network";
-export const ARC_TESTNET_EXPLORER_URL = "https://testnet.arcscan.app";
+export const ARC_TESTNET_EXPLORER_URL = arcDeployment.explorerUrl;
 
 export const arcTestnet = defineChain({
   id: ARC_TESTNET_CHAIN_ID,
