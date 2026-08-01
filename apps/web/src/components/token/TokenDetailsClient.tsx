@@ -16,6 +16,7 @@ import { type ArcTokenApiError } from "../../lib/arc/token-api";
 import { Container } from "../layout/Container";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { TokenTradePanel } from "./TokenTradePanel";
 import { WalletConnectButton } from "../wallet/WalletConnectButton";
 
 type TokenDetailsClientProps = {
@@ -136,6 +137,18 @@ function getTerminalErrorPresentation(error: ArcTokenApiError) {
         eyebrow: "Pool verification error",
         summary: error.message,
         title: "The resolved pool is not registered in the Arc Testnet factory."
+      };
+    case "POOL_TOKEN_MISMATCH":
+      return {
+        eyebrow: "Pool validation error",
+        summary: error.message,
+        title: "The resolved pool does not match the requested token."
+      };
+    case "INVALID_QUOTE_ASSET":
+      return {
+        eyebrow: "Quote asset error",
+        summary: error.message,
+        title: "The resolved pool is not paired with the verified Arc USDC contract."
       };
     case "CONTRACT_READ_FAILED":
       return {
@@ -348,6 +361,13 @@ export function TokenDetailsClient({ address }: TokenDetailsClientProps) {
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
           <div className="space-y-6">
+            <TokenTradePanel
+              data={readyData}
+              isPageLoading={isLoading}
+              onRefresh={retry}
+              tokenAddress={tokenAddress}
+            />
+
             <Card className="space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
@@ -622,7 +642,7 @@ export function TokenDetailsClient({ address }: TokenDetailsClientProps) {
                   valueClassName="truncate"
                 />
                 <DataRow
-                  label="Arc Testnet staging adapter - not a DEX"
+                  label="Arc Testnet staging adapter — not a DEX"
                   value={formatCompactAddress(arcDeployment.stagingAdapterAddress)}
                   valueClassName="truncate"
                 />

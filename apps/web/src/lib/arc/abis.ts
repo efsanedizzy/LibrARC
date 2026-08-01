@@ -171,6 +171,170 @@ export const launchPoolAbi = [
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "capacity", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "quoteBuy",
+    stateMutability: "view",
+    inputs: [{ name: "usdcAmountIn", type: "uint256" }],
+    outputs: [
+      {
+        name: "quote",
+        type: "tuple",
+        components: [
+          { name: "fee", type: "uint256" },
+          { name: "netUsdcIn", type: "uint256" },
+          { name: "tokenAmountOut", type: "uint256" },
+          {
+            name: "nextState",
+            type: "tuple",
+            components: [
+              { name: "realUsdcReserve", type: "uint256" },
+              { name: "realTokenReserve", type: "uint256" },
+              { name: "virtualUsdcReserve", type: "uint256" },
+              { name: "virtualTokenReserve", type: "uint256" },
+              { name: "accruedProtocolFees", type: "uint256" }
+            ]
+          }
+        ]
+      },
+      { name: "reachesGraduationThreshold", type: "bool" }
+    ]
+  },
+  {
+    type: "function",
+    name: "buy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "usdcAmountIn", type: "uint256" },
+      { name: "minTokenAmountOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      { name: "recipient", type: "address" }
+    ],
+    outputs: [{ name: "tokenAmountOut", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "quoteSell",
+    stateMutability: "view",
+    inputs: [{ name: "tokenAmountIn", type: "uint256" }],
+    outputs: [
+      {
+        name: "quote",
+        type: "tuple",
+        components: [
+          { name: "fee", type: "uint256" },
+          { name: "grossUsdcAmountOut", type: "uint256" },
+          { name: "netUsdcAmountOut", type: "uint256" },
+          {
+            name: "nextState",
+            type: "tuple",
+            components: [
+              { name: "realUsdcReserve", type: "uint256" },
+              { name: "realTokenReserve", type: "uint256" },
+              { name: "virtualUsdcReserve", type: "uint256" },
+              { name: "virtualTokenReserve", type: "uint256" },
+              { name: "accruedProtocolFees", type: "uint256" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    type: "function",
+    name: "sell",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "tokenAmountIn", type: "uint256" },
+      { name: "minUsdcAmountOut", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      { name: "recipient", type: "address" }
+    ],
+    outputs: [{ name: "netUsdcAmountOut", type: "uint256" }]
+  },
+  {
+    type: "error",
+    name: "PoolNotActive",
+    inputs: [{ name: "currentStatus", type: "uint8" }]
+  },
+  {
+    type: "error",
+    name: "GraduationThresholdExceeded",
+    inputs: [
+      { name: "currentRealUsdcReserve", type: "uint256" },
+      { name: "netUsdcIn", type: "uint256" },
+      { name: "graduationThreshold", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "BuysPaused",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "AllTradingPaused",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "ZeroRecipient",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "ExpiredDeadline",
+    inputs: [
+      { name: "currentTimestamp", type: "uint256" },
+      { name: "deadline", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "InsufficientTokenOutput",
+    inputs: [
+      { name: "minimumTokenAmountOut", type: "uint256" },
+      { name: "actualTokenAmountOut", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "InsufficientUsdcOutput",
+    inputs: [
+      { name: "minimumUsdcAmountOut", type: "uint256" },
+      { name: "actualUsdcAmountOut", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "ZeroInput",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "ZeroOutput",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "InvalidFeeBps",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "InsufficientRealTokenReserve",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "InsufficientRealUsdcReserve",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "TokenReserveExceedsTotalSupply",
+    inputs: []
   }
 ] as const;
 
@@ -236,6 +400,54 @@ export const erc20Abi = [
       { name: "spender", type: "address" }
     ],
     outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "value", type: "uint256" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  },
+  {
+    type: "event",
+    name: "Approval",
+    anonymous: false,
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "spender", type: "address", indexed: true },
+      { name: "value", type: "uint256", indexed: false }
+    ]
+  },
+  {
+    type: "error",
+    name: "ERC20InsufficientAllowance",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "allowance", type: "uint256" },
+      { name: "needed", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "ERC20InvalidApprover",
+    inputs: [{ name: "approver", type: "address" }]
+  },
+  {
+    type: "error",
+    name: "ERC20InvalidSpender",
+    inputs: [{ name: "spender", type: "address" }]
+  },
+  {
+    type: "error",
+    name: "ERC20InsufficientBalance",
+    inputs: [
+      { name: "sender", type: "address" },
+      { name: "balance", type: "uint256" },
+      { name: "needed", type: "uint256" }
+    ]
   }
 ] as const;
 

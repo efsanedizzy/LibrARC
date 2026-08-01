@@ -2,6 +2,8 @@ import { type Address } from "viem";
 
 export const ARC_TOKEN_API_ERROR_CODES = [
   "INVALID_ADDRESS",
+  "POOL_TOKEN_MISMATCH",
+  "INVALID_QUOTE_ASSET",
   "TOKEN_NOT_REGISTERED",
   "POOL_NOT_RESOLVED",
   "POOL_NOT_REGISTERED",
@@ -69,6 +71,7 @@ export type ArcTokenApiSuccess = {
   wallet?: {
     address: Address;
     tokenBalance?: string;
+    tokenAllowanceToPool?: string;
     usdcBalance?: string;
     usdcAllowanceToPool?: string;
   };
