@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getAddress } from "viem";
+import { encodeAbiParameters, encodeEventTopics, getAddress } from "viem";
 
+import { launchFactoryAbi } from "./abis";
 import {
   buildArcScanAddressUrl,
   buildArcScanTransactionUrl,
@@ -11,7 +12,8 @@ import {
   createCompactLaunchMetadata,
   decodeLaunchCreatedEventFromReceipt,
   exceedsLaunchMetadataLimit,
-  getUtf8ByteLength
+  getUtf8ByteLength,
+  parseLaunchMetadataUri
 } from "./launch-metadata";
 
 test("metadata generation is deterministic and omits empty optional fields", () => {
@@ -60,17 +62,37 @@ test("decodes the exact LaunchCreated event from a wallet receipt", () => {
   const creator = getAddress("0x1111111111111111111111111111111111111111");
   const launchToken = getAddress("0x2222222222222222222222222222222222222222");
   const launchPool = getAddress("0x3333333333333333333333333333333333333333");
+  const metadataUri = "data:application/json,%7B%22name%22%3A%22Arc%20Nova%22%7D";
   const metadataHash =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const;
+  const topics = encodeEventTopics({
+    abi: launchFactoryAbi,
+    eventName: "LaunchCreated",
+    args: {
+      creator,
+      launchId: 7n,
+      launchToken
+    }
+  }).flatMap((topic): string[] => {
+    if (typeof topic === "string") {
+      return [topic];
+    }
+
+    throw new Error("The LaunchCreated fixture expected only flat indexed topics.");
+  });
   const log = {
     address: factoryAddress,
-    data: "0x000000000000000000000000333333333333333333333333333333333333333300000000000000000000000000000000000000000000000000000000000000e000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000020417263204e6f766100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000044152434e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000027646174613a6170706c69636174696f6e2f6a736f6e2c257b2532326e616d652532322533412532324172632532304e6f766125323225374400000000000000",
-    topics: [
-      "0x606d5e90b0c8a06a0fc86fa5e9d30c5d7ef9f9d2dd385d6b6f85db21c60486ca",
-      "0x0000000000000000000000000000000000000000000000000000000000000007",
-      `0x000000000000000000000000${creator.slice(2)}`,
-      `0x000000000000000000000000${launchToken.slice(2)}`
-    ]
+    data: encodeAbiParameters(
+      [
+        { name: "launchPool", type: "address" },
+        { name: "name", type: "string" },
+        { name: "symbol", type: "string" },
+        { name: "metadataUri", type: "string" },
+        { name: "metadataHash", type: "bytes32" }
+      ],
+      [launchPool, "Arc Nova", "ARCN", metadataUri, metadataHash]
+    ),
+    topics
   };
 
   const decoded = decodeLaunchCreatedEventFromReceipt(
@@ -101,5 +123,15 @@ test("builds token page and ArcScan links", () => {
   assert.equal(
     buildArcScanTransactionUrl("https://testnet.arcscan.app", txHash),
     `https://testnet.arcscan.app/tx/${txHash}`
+  );
+});
+
+test("malformed metadata uri payloads are handled safely", () => {
+  const parsed = parseLaunchMetadataUri("data:application/json,%7Bnot-json%7D");
+
+  assert.equal(parsed.description, undefined);
+  assert.equal(
+    parsed.warning?.message,
+    "The metadata URI could not be decoded as trusted JSON display text."
   );
 });

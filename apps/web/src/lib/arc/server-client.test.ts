@@ -102,7 +102,7 @@ test("falls back to the next Arc RPC when the primary transport fails", async ()
   });
 
   assert.equal(await client.getBlockNumber(), 2n);
-  assert.equal(primaryCalls, 1);
+  assert.equal(primaryCalls, ARC_SERVER_RPC_RETRY_COUNT + 1);
   assert.equal(fallbackCalls, 1);
 });
 

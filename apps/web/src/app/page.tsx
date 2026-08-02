@@ -1,6 +1,5 @@
 import { Features } from "../components/home/Features";
 import { Hero } from "../components/home/Hero";
-import { RecentlyLaunched } from "../components/home/RecentlyLaunched";
 import { TrendingTokens } from "../components/home/TrendingTokens";
 
 export default function HomePage() {
@@ -9,7 +8,6 @@ export default function HomePage() {
       <Hero />
       <Features />
       <TrendingTokens />
-      <RecentlyLaunched />
     </main>
   );
 }

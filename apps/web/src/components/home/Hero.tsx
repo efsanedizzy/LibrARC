@@ -2,16 +2,23 @@ import { Container } from "../layout/Container";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 
-const metrics = [
-  { label: "Active launch rooms", value: "28" },
-  { label: "Community watchlists", value: "14.2K" },
-  { label: "24h paper volume", value: "$18.6M" }
-];
-
-const watchlist = [
-  { name: "ARC Flux", change: "+38.2%", tone: "text-emerald-300" },
-  { name: "Night Relay", change: "+21.4%", tone: "text-emerald-300" },
-  { name: "Drift Mint", change: "-4.8%", tone: "text-rose-300" }
+const highlights = [
+  {
+    label: "Verified source",
+    value: "LaunchFactory-backed",
+    description: "Every Discover card is resolved from the active Arc Testnet LaunchFactory."
+  },
+  {
+    label: "Read only",
+    value: "No wallet required",
+    description: "Public browsing works without a connection and without browser-side RPC reads."
+  },
+  {
+    label: "Automatic updates",
+    value: "New launches appear live",
+    description:
+      "Newly created Factory launches populate the homepage without hard-coded addresses."
+  }
 ];
 
 export function Hero() {
@@ -39,16 +46,17 @@ export function Hero() {
             <Button href="/launch" size="lg">
               Start a Launch
             </Button>
-            <Button href="#trending" size="lg" variant="secondary">
-              Explore Trending Tokens
+            <Button href="#discover" size="lg" variant="secondary">
+              Browse Live Launches
             </Button>
           </div>
 
           <dl className="mt-10 grid gap-4 sm:grid-cols-3">
-            {metrics.map((metric) => (
-              <Card key={metric.label} className="p-5">
-                <dt className="text-sm text-slate-400">{metric.label}</dt>
-                <dd className="mt-2 text-2xl font-semibold text-white">{metric.value}</dd>
+            {highlights.map((item) => (
+              <Card key={item.label} className="p-5">
+                <dt className="text-sm text-slate-400">{item.label}</dt>
+                <dd className="mt-2 text-2xl font-semibold text-white">{item.value}</dd>
+                <p className="mt-3 text-sm leading-6 text-slate-400">{item.description}</p>
               </Card>
             ))}
           </dl>
@@ -64,29 +72,35 @@ export function Hero() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm uppercase tracking-[0.24em] text-cyan-100/70">
-                  Momentum board
+                  Discover flow
                 </p>
                 <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-                  Signal stack
+                  Verified launch browsing
                 </h2>
               </div>
-              <div className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-200">
-                +12.4% pulse
+              <div className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100">
+                Arc Testnet only
               </div>
             </div>
           </div>
 
           <div className="relative space-y-4 p-6">
-            {watchlist.map((token) => (
+            {[
+              "Resolve the canonical launch record from Factory storage.",
+              "Load token and pool state through the resilient Arc server client.",
+              "Open each token route without signing, approvals, or trade actions."
+            ].map((line) => (
               <div
-                key={token.name}
+                key={line}
                 className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/15 px-4 py-4"
               >
                 <div>
-                  <p className="text-base font-semibold text-white">{token.name}</p>
-                  <p className="mt-1 text-sm text-slate-400">Community momentum tracking</p>
+                  <p className="text-base font-semibold text-white">{line}</p>
+                  <p className="mt-1 text-sm text-slate-400">Read-only Discover surface</p>
                 </div>
-                <p className={["text-sm font-semibold", token.tone].join(" ")}>{token.change}</p>
+                <span className="rounded-full border border-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/70">
+                  Live
+                </span>
               </div>
             ))}
           </div>

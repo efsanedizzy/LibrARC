@@ -25,6 +25,14 @@ export type LaunchCreatedEventResult = {
   symbol: string;
 };
 
+export type ParsedLaunchMetadata = {
+  description?: string;
+  warning?: {
+    label: string;
+    message: string;
+  };
+};
+
 type WalletReceiptLog = {
   address?: string;
   data?: string;
@@ -92,6 +100,46 @@ export function buildArcScanAddressUrl(explorerUrl: string, address: Address) {
 
 export function buildArcScanTransactionUrl(explorerUrl: string, hash: Hex) {
   return `${explorerUrl}/tx/${hash}`;
+}
+
+export function parseLaunchMetadataUri(
+  metadataUri: string,
+  { maxBytes = 4096 }: { maxBytes?: number } = {}
+): ParsedLaunchMetadata {
+  if (!metadataUri.startsWith("data:application/json,")) {
+    return {};
+  }
+
+  const byteLength = getUtf8ByteLength(metadataUri);
+
+  if (byteLength > maxBytes) {
+    return {
+      warning: {
+        label: "Launch metadata",
+        message: `The metadata URI exceeded the safe ${maxBytes}-byte decode limit.`
+      }
+    };
+  }
+
+  try {
+    const encodedPayload = metadataUri.slice("data:application/json,".length);
+    const decodedPayload = decodeURIComponent(encodedPayload);
+    const parsed = JSON.parse(decodedPayload) as {
+      description?: unknown;
+    };
+
+    return {
+      description:
+        typeof parsed.description === "string" ? parsed.description.trim() || undefined : undefined
+    };
+  } catch {
+    return {
+      warning: {
+        label: "Launch metadata",
+        message: "The metadata URI could not be decoded as trusted JSON display text."
+      }
+    };
+  }
 }
 
 export function decodeLaunchCreatedEventFromReceipt(

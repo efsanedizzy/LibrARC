@@ -6,3 +6,5 @@ export * from "./launch-api";
 export * from "./launch-metadata";
 export * from "./trade-api";
 export * from "./trading";
+export * from "./launches-api";
+export * from "./launches-server";
