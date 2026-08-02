@@ -8,7 +8,9 @@ test("name is required", () => {
     {
       name: "   ",
       symbol: "ARCN",
-      description: ""
+      description: "",
+      initialPurchaseAmount: "",
+      initialPurchaseEnabled: false
     },
     500
   );
@@ -21,7 +23,9 @@ test("symbol is required", () => {
     {
       name: "Arc Nova",
       symbol: "",
-      description: ""
+      description: "",
+      initialPurchaseAmount: "",
+      initialPurchaseEnabled: false
     },
     500
   );
@@ -34,7 +38,9 @@ test("empty optional description is valid", () => {
     {
       name: "Arc Nova",
       symbol: "ARCN",
-      description: ""
+      description: "",
+      initialPurchaseAmount: "",
+      initialPurchaseEnabled: false
     },
     500
   );

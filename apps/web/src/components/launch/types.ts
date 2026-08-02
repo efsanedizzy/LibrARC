@@ -1,9 +1,12 @@
 import { type Address } from "viem";
 
-export type LaunchFieldName = "description" | "metadata" | "name" | "symbol";
+export type LaunchFieldName =
+  "description" | "initialPurchaseAmount" | "metadata" | "name" | "symbol";
 
 export type LaunchFormValues = {
   description: string;
+  initialPurchaseAmount: string;
+  initialPurchaseEnabled: boolean;
   name: string;
   symbol: string;
 };
@@ -16,10 +19,16 @@ export type LaunchTechnicalDetail = {
 };
 
 export type LaunchFeedbackPhase =
+  | "approval confirmed"
+  | "approval required"
+  | "approving"
   | "contract reverted"
   | "disconnected"
   | "idle"
+  | "insufficient balance"
   | "loading configuration"
+  | "partial success"
+  | "quote unavailable"
   | "rpc unavailable"
   | "simulating"
   | "success"
@@ -39,8 +48,21 @@ export type LaunchFeedback = {
 export type LaunchSuccessState = {
   creator: Address;
   factoryAddress: Address;
+  initialPurchase?: {
+    tokenAmountOut: string;
+    usdcAmountIn: string;
+  };
   launchId: string;
   poolAddress: Address;
   tokenAddress: Address;
+  txHash: `0x${string}`;
+};
+
+export type LaunchPartialSuccessState = {
+  details?: LaunchTechnicalDetail[];
+  factoryAddress: Address;
+  initialPurchaseAmount?: string;
+  message: string;
+  receiptStatus: "confirmed";
   txHash: `0x${string}`;
 };

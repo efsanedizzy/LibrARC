@@ -1,6 +1,9 @@
 import { buildLaunchMetadata, exceedsLaunchMetadataLimit } from "../../lib/arc/launch-metadata";
+import { MAX_DECIMAL_INPUT_LENGTH } from "../../lib/arc/trading";
 
 import type { LaunchFieldName, LaunchFormErrors, LaunchFormValues } from "./types";
+
+const MAX_INITIAL_PURCHASE_UNITS = 1_000_000n * 10n ** 6n;
 
 function getTrimmedValue(value: string) {
   return value.trim();
@@ -67,6 +70,46 @@ export function validateField(
 
       return null;
     }
+    case "initialPurchaseAmount": {
+      if (!values.initialPurchaseEnabled) {
+        return null;
+      }
+
+      const trimmedAmount = getTrimmedValue(values.initialPurchaseAmount);
+
+      if (!trimmedAmount) {
+        return null;
+      }
+
+      if (trimmedAmount.length > MAX_DECIMAL_INPUT_LENGTH) {
+        return "Initial purchase amount is too long.";
+      }
+
+      if (trimmedAmount.startsWith("-")) {
+        return "Initial purchase amount cannot be negative.";
+      }
+
+      if (!/^\d+(\.\d+)?$/.test(trimmedAmount)) {
+        return "Initial purchase amount must be a valid USDC value.";
+      }
+
+      const [wholePart, fractionPart = ""] = trimmedAmount.split(".");
+
+      if (fractionPart.length > 6) {
+        return "Initial purchase amount supports at most 6 decimal places.";
+      }
+
+      const normalizedWhole = wholePart.replace(/^0+(?=\d)/, "") || "0";
+      const normalized =
+        `${normalizedWhole}${fractionPart.padEnd(6, "0")}`.replace(/^0+(?=\d)/, "") || "0";
+      const amount = BigInt(normalized);
+
+      if (amount > MAX_INITIAL_PURCHASE_UNITS) {
+        return "Initial purchase amount must be 1,000,000 USDC or less.";
+      }
+
+      return null;
+    }
     case "metadata": {
       if (maxMetadataUriLength === null) {
         return null;
@@ -84,7 +127,13 @@ export function validateField(
 }
 
 export function getAllErrors(values: LaunchFormValues, maxMetadataUriLength: number | null = null) {
-  const fields: LaunchFieldName[] = ["name", "symbol", "description", "metadata"];
+  const fields: LaunchFieldName[] = [
+    "name",
+    "symbol",
+    "description",
+    "initialPurchaseAmount",
+    "metadata"
+  ];
 
   return fields.reduce<LaunchFormErrors>((errors, field) => {
     const error = validateField(field, values, maxMetadataUriLength);

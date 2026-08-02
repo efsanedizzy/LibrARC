@@ -25,6 +25,15 @@ export type LaunchCreatedEventResult = {
   symbol: string;
 };
 
+export type CreatorInitialPurchaseExecutedEventResult = {
+  creator: Address;
+  launchId: string;
+  launchPool: Address;
+  recipient: Address;
+  tokenAmountOut: string;
+  usdcAmountIn: string;
+};
+
 export type ParsedLaunchMetadata = {
   description?: string;
   warning?: {
@@ -159,26 +168,68 @@ export function decodeLaunchCreatedEventFromReceipt(
       continue;
     }
 
-    const decoded = decodeEventLog({
-      abi: launchFactoryAbi,
-      data: log.data as Hex,
-      eventName: "LaunchCreated",
-      topics: log.topics as [Hex, ...Hex[]]
-    });
+    try {
+      const decoded = decodeEventLog({
+        abi: launchFactoryAbi,
+        data: log.data as Hex,
+        eventName: "LaunchCreated",
+        topics: log.topics as [Hex, ...Hex[]]
+      });
 
-    const args = decoded.args;
+      const args = decoded.args;
 
-    return {
-      creator: getAddress(args.creator),
-      launchId: args.launchId.toString(10),
-      launchPool: getAddress(args.launchPool),
-      launchToken: getAddress(args.launchToken),
-      metadataHash: args.metadataHash,
-      metadataUri: args.metadataUri,
-      name: args.name,
-      symbol: args.symbol
-    };
+      return {
+        creator: getAddress(args.creator),
+        launchId: args.launchId.toString(10),
+        launchPool: getAddress(args.launchPool),
+        launchToken: getAddress(args.launchToken),
+        metadataHash: args.metadataHash,
+        metadataUri: args.metadataUri,
+        name: args.name,
+        symbol: args.symbol
+      };
+    } catch {
+      continue;
+    }
   }
 
   throw new Error("The LaunchCreated event was not found in the wallet receipt.");
+}
+
+export function decodeCreatorInitialPurchaseEventFromReceipt(
+  receipt: WalletReceiptLike,
+  factoryAddress: Address
+): CreatorInitialPurchaseExecutedEventResult | null {
+  for (const log of receipt.logs ?? []) {
+    if (!log.address || !log.data || !log.topics || log.topics.length === 0) {
+      continue;
+    }
+
+    if (getAddress(log.address) !== factoryAddress) {
+      continue;
+    }
+
+    try {
+      const decoded = decodeEventLog({
+        abi: launchFactoryAbi,
+        data: log.data as Hex,
+        eventName: "CreatorInitialPurchaseExecuted",
+        topics: log.topics as [Hex, ...Hex[]]
+      });
+      const args = decoded.args;
+
+      return {
+        creator: getAddress(args.creator),
+        launchId: args.launchId.toString(10),
+        launchPool: getAddress(args.launchPool),
+        recipient: getAddress(args.recipient),
+        tokenAmountOut: args.tokenAmountOut.toString(10),
+        usdcAmountIn: args.usdcAmountIn.toString(10)
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }

@@ -1,6 +1,7 @@
 import type { Address } from "viem";
 
 import { arcDeployment } from "../../lib/arc/config";
+import { formatLaunchTokenAmount } from "../../lib/arc/format";
 import { arcTestnet } from "../../lib/chains/arc-testnet";
 import { Card } from "../ui/Card";
 import type { LaunchFormValues } from "./types";
@@ -8,9 +9,12 @@ import { getDisplayValue } from "./validation";
 
 type LaunchSummaryProps = {
   connectedWalletAddress?: Address;
+  initialPurchaseAmount: string | null;
   maxMetadataUriLength: number | null;
   metadataUriByteLength: number;
+  minimumTokenAmountOut: string | null;
   paused: boolean;
+  purchaseMode: "createLaunch" | "createLaunchAndBuy";
   values: LaunchFormValues;
 };
 
@@ -44,9 +48,12 @@ function SummaryRow({ label, title, truncate = false, value }: SummaryRowProps) 
 
 export function LaunchSummary({
   connectedWalletAddress,
+  initialPurchaseAmount,
   maxMetadataUriLength,
   metadataUriByteLength,
+  minimumTokenAmountOut,
   paused,
+  purchaseMode,
   values
 }: LaunchSummaryProps) {
   const tokenName = getDisplayValue(values.name) || "Unnamed token";
@@ -89,6 +96,16 @@ export function LaunchSummary({
           value={creatorWallet}
         />
         <SummaryRow
+          label="Initial purchase"
+          value={initialPurchaseAmount ? `${initialPurchaseAmount.trim()} USDC` : "Not enabled"}
+        />
+        <SummaryRow
+          label="Minimum tokens"
+          value={
+            minimumTokenAmountOut ? formatLaunchTokenAmount(BigInt(minimumTokenAmountOut)) : "N/A"
+          }
+        />
+        <SummaryRow
           label="Factory"
           title={arcDeployment.factoryAddress}
           truncate
@@ -106,7 +123,7 @@ export function LaunchSummary({
           }
         />
         <SummaryRow label="Factory status" value={paused ? "Paused" : "Ready"} />
-        <SummaryRow label="Launch path" value="createLaunch" />
+        <SummaryRow label="Launch path" value={purchaseMode} />
       </dl>
     </Card>
   );

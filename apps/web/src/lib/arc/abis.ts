@@ -16,6 +16,26 @@ export const launchFactoryAbi = [
   },
   {
     type: "function",
+    name: "createLaunchAndBuy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name_", type: "string" },
+      { name: "symbol_", type: "string" },
+      { name: "metadataUri_", type: "string" },
+      { name: "usdcAmountIn_", type: "uint256" },
+      { name: "minTokenAmountOut_", type: "uint256" },
+      { name: "deadline_", type: "uint256" },
+      { name: "recipient_", type: "address" }
+    ],
+    outputs: [
+      { name: "launchToken", type: "address" },
+      { name: "launchPool", type: "address" },
+      { name: "launchId", type: "uint256" },
+      { name: "tokenAmountOut", type: "uint256" }
+    ]
+  },
+  {
+    type: "function",
     name: "quoteAsset",
     stateMutability: "view",
     inputs: [],
@@ -160,6 +180,19 @@ export const launchFactoryAbi = [
     ]
   },
   {
+    type: "event",
+    name: "CreatorInitialPurchaseExecuted",
+    anonymous: false,
+    inputs: [
+      { name: "launchId", type: "uint256", indexed: true },
+      { name: "creator", type: "address", indexed: true },
+      { name: "recipient", type: "address", indexed: true },
+      { name: "launchPool", type: "address", indexed: false },
+      { name: "usdcAmountIn", type: "uint256", indexed: false },
+      { name: "tokenAmountOut", type: "uint256", indexed: false }
+    ]
+  },
+  {
     type: "error",
     name: "EmptyMetadataUri",
     inputs: []
@@ -179,6 +212,46 @@ export const launchFactoryAbi = [
   },
   {
     type: "error",
+    name: "ZeroInitialPurchase",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "ZeroRecipient",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "ExpiredDeadline",
+    inputs: [
+      { name: "currentTimestamp", type: "uint256" },
+      { name: "deadline", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "UnexpectedQuoteAssetBalanceIncrease",
+    inputs: [
+      { name: "balanceBefore", type: "uint256" },
+      { name: "balanceAfter", type: "uint256" },
+      { name: "expectedIncrease", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "FactoryQuoteAssetBalanceMismatch",
+    inputs: [
+      { name: "expectedBalance", type: "uint256" },
+      { name: "actualBalance", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "FactoryAllowanceNotCleared",
+    inputs: [{ name: "remainingAllowance", type: "uint256" }]
+  },
+  {
+    type: "error",
     name: "InvalidPoolInitialization",
     inputs: []
   },
@@ -186,6 +259,11 @@ export const launchFactoryAbi = [
     type: "error",
     name: "TokenTransferFailed",
     inputs: []
+  },
+  {
+    type: "error",
+    name: "UnknownLibrarcPool",
+    inputs: [{ name: "pool", type: "address" }]
   },
   {
     type: "error",
@@ -210,6 +288,75 @@ export const launchFactoryAbi = [
   {
     type: "error",
     name: "LibrARCTokenEmptySymbol",
+    inputs: []
+  }
+] as const;
+
+export const launchFactorySimulationAbi = [
+  ...launchFactoryAbi,
+  {
+    type: "error",
+    name: "UnauthorizedFactory",
+    inputs: [
+      { name: "caller", type: "address" },
+      { name: "expectedFactory", type: "address" }
+    ]
+  },
+  {
+    type: "error",
+    name: "ZeroBuyer",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "PoolNotActive",
+    inputs: [{ name: "currentStatus", type: "uint8" }]
+  },
+  {
+    type: "error",
+    name: "GraduationThresholdExceeded",
+    inputs: [
+      { name: "currentRealUsdcReserve", type: "uint256" },
+      { name: "netUsdcIn", type: "uint256" },
+      { name: "graduationThreshold", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "BuysPaused",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "AllTradingPaused",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "InsufficientTokenOutput",
+    inputs: [
+      { name: "minimumTokenAmountOut", type: "uint256" },
+      { name: "actualTokenAmountOut", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "ZeroInput",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "ZeroOutput",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "InvalidFeeBps",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "InsufficientRealTokenReserve",
     inputs: []
   }
 ] as const;

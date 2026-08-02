@@ -10,6 +10,7 @@ import {
   buildLaunchMetadata,
   buildLaunchTokenPagePath,
   createCompactLaunchMetadata,
+  decodeCreatorInitialPurchaseEventFromReceipt,
   decodeLaunchCreatedEventFromReceipt,
   exceedsLaunchMetadataLimit,
   getUtf8ByteLength,
@@ -109,6 +110,244 @@ test("decodes the exact LaunchCreated event from a wallet receipt", () => {
   assert.equal(decoded.name, "Arc Nova");
   assert.equal(decoded.symbol, "ARCN");
   assert.equal(decoded.metadataHash, metadataHash);
+});
+
+test("decodes the exact CreatorInitialPurchaseExecuted event from a wallet receipt", () => {
+  const factoryAddress = getAddress("0xc94503F5DcDc43B0a4693C689a7520ccfd2bA0fA");
+  const creator = getAddress("0x1111111111111111111111111111111111111111");
+  const recipient = getAddress("0x4444444444444444444444444444444444444444");
+  const launchPool = getAddress("0x3333333333333333333333333333333333333333");
+  const topics = encodeEventTopics({
+    abi: launchFactoryAbi,
+    eventName: "CreatorInitialPurchaseExecuted",
+    args: {
+      launchId: 7n,
+      creator,
+      recipient
+    }
+  }).flatMap((topic): string[] => {
+    if (typeof topic === "string") {
+      return [topic];
+    }
+
+    throw new Error(
+      "The CreatorInitialPurchaseExecuted fixture expected only flat indexed topics."
+    );
+  });
+  const log = {
+    address: factoryAddress,
+    data: encodeAbiParameters(
+      [
+        { name: "launchPool", type: "address" },
+        { name: "usdcAmountIn", type: "uint256" },
+        { name: "tokenAmountOut", type: "uint256" }
+      ],
+      [launchPool, 2_500_000n, 987_654_321n]
+    ),
+    topics
+  };
+
+  const decoded = decodeCreatorInitialPurchaseEventFromReceipt(
+    {
+      logs: [log]
+    },
+    factoryAddress
+  );
+
+  assert.ok(decoded);
+  assert.equal(decoded?.launchId, "7");
+  assert.equal(decoded?.creator, creator);
+  assert.equal(decoded?.recipient, recipient);
+  assert.equal(decoded?.launchPool, launchPool);
+  assert.equal(decoded?.usdcAmountIn, "2500000");
+  assert.equal(decoded?.tokenAmountOut, "987654321");
+});
+
+test("unrelated receipt logs are ignored safely before LaunchCreated", () => {
+  const factoryAddress = getAddress("0xc94503F5DcDc43B0a4693C689a7520ccfd2bA0fA");
+  const creator = getAddress("0x1111111111111111111111111111111111111111");
+  const launchToken = getAddress("0x2222222222222222222222222222222222222222");
+  const launchPool = getAddress("0x3333333333333333333333333333333333333333");
+  const approvalTopics = encodeEventTopics({
+    abi: launchFactoryAbi,
+    eventName: "CreatorInitialPurchaseExecuted",
+    args: {
+      launchId: 7n,
+      creator,
+      recipient: getAddress("0x4444444444444444444444444444444444444444")
+    }
+  }).flatMap((topic): string[] => {
+    if (typeof topic === "string") {
+      return [topic];
+    }
+
+    throw new Error("The unrelated fixture expected only flat indexed topics.");
+  });
+  const launchTopics = encodeEventTopics({
+    abi: launchFactoryAbi,
+    eventName: "LaunchCreated",
+    args: {
+      creator,
+      launchId: 7n,
+      launchToken
+    }
+  }).flatMap((topic): string[] => {
+    if (typeof topic === "string") {
+      return [topic];
+    }
+
+    throw new Error("The LaunchCreated fixture expected only flat indexed topics.");
+  });
+
+  const decoded = decodeLaunchCreatedEventFromReceipt(
+    {
+      logs: [
+        {
+          address: factoryAddress,
+          data: encodeAbiParameters(
+            [
+              { name: "launchPool", type: "address" },
+              { name: "usdcAmountIn", type: "uint256" },
+              { name: "tokenAmountOut", type: "uint256" }
+            ],
+            [launchPool, 2_500_000n, 123n]
+          ),
+          topics: approvalTopics
+        },
+        {
+          address: factoryAddress,
+          data: encodeAbiParameters(
+            [
+              { name: "launchPool", type: "address" },
+              { name: "name", type: "string" },
+              { name: "symbol", type: "string" },
+              { name: "metadataUri", type: "string" },
+              { name: "metadataHash", type: "bytes32" }
+            ],
+            [
+              launchPool,
+              "Arc Nova",
+              "ARCN",
+              "data:application/json,%7B%22name%22%3A%22Arc%20Nova%22%7D",
+              "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ]
+          ),
+          topics: launchTopics
+        }
+      ]
+    },
+    factoryAddress
+  );
+
+  assert.equal(decoded.launchPool, launchPool);
+  assert.equal(decoded.launchToken, launchToken);
+});
+
+test("exact factory-address filtering ignores LaunchCreated logs from other addresses", () => {
+  const factoryAddress = getAddress("0xc94503F5DcDc43B0a4693C689a7520ccfd2bA0fA");
+  const otherFactoryAddress = getAddress("0x9999999999999999999999999999999999999999");
+  const creator = getAddress("0x1111111111111111111111111111111111111111");
+  const launchToken = getAddress("0x2222222222222222222222222222222222222222");
+  const launchPool = getAddress("0x3333333333333333333333333333333333333333");
+  const topics = encodeEventTopics({
+    abi: launchFactoryAbi,
+    eventName: "LaunchCreated",
+    args: {
+      creator,
+      launchId: 7n,
+      launchToken
+    }
+  }).flatMap((topic): string[] => {
+    if (typeof topic === "string") {
+      return [topic];
+    }
+
+    throw new Error("The LaunchCreated fixture expected only flat indexed topics.");
+  });
+
+  assert.throws(
+    () =>
+      decodeLaunchCreatedEventFromReceipt(
+        {
+          logs: [
+            {
+              address: otherFactoryAddress,
+              data: encodeAbiParameters(
+                [
+                  { name: "launchPool", type: "address" },
+                  { name: "name", type: "string" },
+                  { name: "symbol", type: "string" },
+                  { name: "metadataUri", type: "string" },
+                  { name: "metadataHash", type: "bytes32" }
+                ],
+                [
+                  launchPool,
+                  "Arc Nova",
+                  "ARCN",
+                  "data:application/json,%7B%22name%22%3A%22Arc%20Nova%22%7D",
+                  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ]
+              ),
+              topics
+            }
+          ]
+        },
+        factoryAddress
+      ),
+    /LaunchCreated event was not found/i
+  );
+});
+
+test("optional initial-purchase event absence does not fail launch success decoding", () => {
+  const factoryAddress = getAddress("0xc94503F5DcDc43B0a4693C689a7520ccfd2bA0fA");
+  const creator = getAddress("0x1111111111111111111111111111111111111111");
+  const launchToken = getAddress("0x2222222222222222222222222222222222222222");
+  const launchPool = getAddress("0x3333333333333333333333333333333333333333");
+  const topics = encodeEventTopics({
+    abi: launchFactoryAbi,
+    eventName: "LaunchCreated",
+    args: {
+      creator,
+      launchId: 7n,
+      launchToken
+    }
+  }).flatMap((topic): string[] => {
+    if (typeof topic === "string") {
+      return [topic];
+    }
+
+    throw new Error("The LaunchCreated fixture expected only flat indexed topics.");
+  });
+  const receipt = {
+    logs: [
+      {
+        address: factoryAddress,
+        data: encodeAbiParameters(
+          [
+            { name: "launchPool", type: "address" },
+            { name: "name", type: "string" },
+            { name: "symbol", type: "string" },
+            { name: "metadataUri", type: "string" },
+            { name: "metadataHash", type: "bytes32" }
+          ],
+          [
+            launchPool,
+            "Arc Nova",
+            "ARCN",
+            "data:application/json,%7B%22name%22%3A%22Arc%20Nova%22%7D",
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        ),
+        topics
+      }
+    ]
+  };
+
+  const launchCreated = decodeLaunchCreatedEventFromReceipt(receipt, factoryAddress);
+  const initialPurchase = decodeCreatorInitialPurchaseEventFromReceipt(receipt, factoryAddress);
+
+  assert.equal(launchCreated.launchId, "7");
+  assert.equal(initialPurchase, null);
 });
 
 test("builds token page and ArcScan links", () => {
