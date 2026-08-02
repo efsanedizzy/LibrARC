@@ -1,6 +1,70 @@
 export const launchFactoryAbi = [
   {
     type: "function",
+    name: "createLaunch",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "name_", type: "string" },
+      { name: "symbol_", type: "string" },
+      { name: "metadataUri_", type: "string" }
+    ],
+    outputs: [
+      { name: "launchToken", type: "address" },
+      { name: "launchPool", type: "address" },
+      { name: "launchId", type: "uint256" }
+    ]
+  },
+  {
+    type: "function",
+    name: "quoteAsset",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
+    name: "buyFeeBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "sellFeeBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "graduationThreshold",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "virtualUsdcReserve",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "virtualTokenReserve",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "maxMetadataUriLength",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
     name: "launchCount",
     stateMutability: "view",
     inputs: [],
@@ -79,6 +143,74 @@ export const launchFactoryAbi = [
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "event",
+    name: "LaunchCreated",
+    anonymous: false,
+    inputs: [
+      { name: "launchId", type: "uint256", indexed: true },
+      { name: "creator", type: "address", indexed: true },
+      { name: "launchToken", type: "address", indexed: true },
+      { name: "launchPool", type: "address", indexed: false },
+      { name: "name", type: "string", indexed: false },
+      { name: "symbol", type: "string", indexed: false },
+      { name: "metadataUri", type: "string", indexed: false },
+      { name: "metadataHash", type: "bytes32", indexed: false }
+    ]
+  },
+  {
+    type: "error",
+    name: "EmptyMetadataUri",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "MetadataUriTooLong",
+    inputs: [
+      { name: "actualLength", type: "uint256" },
+      { name: "maxLength", type: "uint256" }
+    ]
+  },
+  {
+    type: "error",
+    name: "FactoryTokenBalanceNotZero",
+    inputs: [{ name: "remainingBalance", type: "uint256" }]
+  },
+  {
+    type: "error",
+    name: "InvalidPoolInitialization",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "TokenTransferFailed",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "ZeroMaxMetadataUriLength",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "NativeAssetNotAccepted",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "EnforcedPause",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "LibrARCTokenEmptyName",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "LibrARCTokenEmptySymbol",
+    inputs: []
   }
 ] as const;
 

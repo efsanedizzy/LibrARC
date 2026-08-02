@@ -1,4 +1,4 @@
-import { type Address, formatUnits } from "viem";
+import { type Address, type Hex, formatUnits } from "viem";
 
 import { ARC_USDC_DECIMALS, formatTokenAmount } from "./format";
 
@@ -135,6 +135,11 @@ export async function wait(ms: number) {
 }
 
 export type WalletReceipt = {
+  logs?: Array<{
+    address?: Address | string;
+    data?: Hex | string;
+    topics?: Array<Hex | string>;
+  }>;
   status?: string;
   transactionHash?: string;
 };

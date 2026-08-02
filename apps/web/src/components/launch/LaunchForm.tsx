@@ -1,32 +1,64 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
-import { useConnection } from "wagmi";
+import { useEffect, useId, useMemo, useState } from "react";
+import { BaseError, useConnection, useSwitchChain, useWriteContract } from "wagmi";
+import { getAddress, type Address } from "viem";
 
+import { launchFactoryAbi } from "../../lib/arc/abis";
+import { arcDeployment } from "../../lib/arc/config";
+import {
+  buildArcLaunchApiPath,
+  isArcLaunchApiError,
+  isArcLaunchConfigSuccess,
+  isArcLaunchSimulationSuccess,
+  type ArcLaunchApiError,
+  type ArcLaunchConfigSuccess
+} from "../../lib/arc/launch-api";
+import {
+  buildArcScanAddressUrl,
+  buildArcScanTransactionUrl,
+  buildLaunchMetadata,
+  buildLaunchTokenPagePath,
+  decodeLaunchCreatedEventFromReceipt
+} from "../../lib/arc/launch-metadata";
+import { isWalletRejection, waitForWalletTransactionReceipt } from "../../lib/arc/trading";
 import { arcTestnet } from "../../lib/chains/arc-testnet";
-import { WalletConnectButton } from "../wallet/WalletConnectButton";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { WalletConnectButton } from "../wallet/WalletConnectButton";
 import { LaunchField } from "./LaunchField";
 import { LaunchSummary } from "./LaunchSummary";
-import type { LaunchFieldName, LaunchFormErrors, LaunchFormValues } from "./types";
-import { getAllErrors, getDisplayValue, sanitizePurchaseInput, sanitizeSymbol } from "./validation";
+import {
+  getLaunchFeedbackFromApiError,
+  getLaunchFeedbackFromWalletError,
+  getLaunchSubmitDisabledReason,
+  isPendingLaunchPhase
+} from "./state";
+import type {
+  LaunchFeedback,
+  LaunchFeedbackPhase,
+  LaunchFieldName,
+  LaunchFormErrors,
+  LaunchFormValues,
+  LaunchSuccessState,
+  LaunchTechnicalDetail
+} from "./types";
+import { getAllErrors, getDisplayValue, getLaunchMetadataPreview } from "./validation";
 
-const launchMessage = "Token deployment will be enabled after the smart contracts are integrated.";
+const ARC_TESTNET_NOTICE =
+  "Arc Testnet only - created tokens and test assets have no monetary value.";
 
 const initialValues: LaunchFormValues = {
   name: "",
   symbol: "",
-  description: "",
-  logoFile: null,
-  logoPreviewUrl: null,
-  website: "",
-  twitter: "",
-  telegram: "",
-  initialPurchase: "",
-  creatorWallet: ""
+  description: ""
+};
+
+type LaunchConfigState = {
+  data: ArcLaunchConfigSuccess | null;
+  error: LaunchFeedback | null;
+  isLoading: boolean;
 };
 
 function getFieldError(
@@ -42,37 +74,301 @@ function getFieldError(
   return errors[field];
 }
 
+function formatAddress(address: Address) {
+  return `${address.slice(0, 6)}...${address.slice(-5)}`;
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof BaseError) {
+    return error.shortMessage || fallback;
+  }
+
+  if (error instanceof Error) {
+    return error.message || fallback;
+  }
+
+  return fallback;
+}
+
+async function readJson<T>(input: RequestInfo, init?: RequestInit) {
+  const response = await fetch(input, {
+    cache: "no-store",
+    headers: {
+      accept: "application/json",
+      ...(init?.headers ?? {})
+    },
+    ...init
+  });
+  const payload = (await response.json()) as unknown;
+
+  if (!response.ok) {
+    if (isArcLaunchApiError(payload)) {
+      throw payload;
+    }
+
+    throw {
+      ok: false,
+      code: "RPC_UNAVAILABLE",
+      details: [
+        {
+          label: typeof input === "string" ? input : "Arc launch route",
+          message: `The route returned HTTP ${response.status}.`
+        }
+      ],
+      message: `The route returned HTTP ${response.status}.`
+    } satisfies ArcLaunchApiError;
+  }
+
+  return payload as T;
+}
+
+function parseMaxMetadataUriLength(config: ArcLaunchConfigSuccess | null) {
+  if (!config) {
+    return null;
+  }
+
+  const parsed = Number(config.factory.maxMetadataUriLength);
+
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function DetailList({ details }: { details: LaunchTechnicalDetail[] }) {
+  if (details.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className="rounded-[1.25rem] border border-white/10 bg-slate-950/60 p-4">
+      <summary className="cursor-pointer text-sm font-semibold text-white">
+        Technical details
+      </summary>
+      <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+        {details.map((detail) => (
+          <li key={`${detail.label}-${detail.message}`}>
+            <span className="font-semibold text-white">{detail.label}:</span> {detail.message}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function FeedbackCard({ feedback }: { feedback: LaunchFeedback | null }) {
+  if (!feedback) {
+    return null;
+  }
+
+  const toneClassName =
+    feedback.phase === "success"
+      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-50"
+      : feedback.phase === "user rejected"
+        ? "border-amber-300/20 bg-amber-300/10 text-amber-50"
+        : "border-rose-300/20 bg-rose-300/10 text-rose-50";
+
+  return (
+    <Card className={`space-y-4 rounded-[1.5rem] ${toneClassName}`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em]">
+          {feedback.phase}
+        </span>
+        {feedback.txHash ? (
+          <Link
+            className="text-sm font-semibold text-cyan-100 transition hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+            href={buildArcScanTransactionUrl(arcDeployment.explorerUrl, feedback.txHash)}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {feedback.txHash}
+          </Link>
+        ) : null}
+      </div>
+      <p className="text-sm leading-6">{feedback.message}</p>
+      <DetailList details={feedback.details ?? []} />
+    </Card>
+  );
+}
+
+function ResultField({ label, value, href }: { href?: string; label: string; value: string }) {
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/70">
+        {label}
+      </label>
+      <input
+        className="min-h-11 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white"
+        readOnly
+        value={value}
+      />
+      {href ? (
+        <Link
+          className="inline-flex text-sm font-semibold text-cyan-100 transition hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+          href={href}
+          rel="noreferrer"
+          target={href.startsWith("http") ? "_blank" : undefined}
+        >
+          Open link
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+function SuccessPanel({ success }: { success: LaunchSuccessState }) {
+  return (
+    <Card className="space-y-5 rounded-[1.5rem] border-emerald-300/20 bg-emerald-300/10">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-100/80">
+          Launch created
+        </p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">
+          Your Arc Testnet launch was confirmed.
+        </h2>
+      </div>
+
+      <div className="grid gap-4">
+        <ResultField
+          label="Token address"
+          value={success.tokenAddress}
+          href={buildArcScanAddressUrl(arcDeployment.explorerUrl, success.tokenAddress)}
+        />
+        <ResultField
+          label="Pool address"
+          value={success.poolAddress}
+          href={buildArcScanAddressUrl(arcDeployment.explorerUrl, success.poolAddress)}
+        />
+        <ResultField
+          label="Factory address"
+          value={success.factoryAddress}
+          href={buildArcScanAddressUrl(arcDeployment.explorerUrl, success.factoryAddress)}
+        />
+        <ResultField
+          label="Transaction hash"
+          value={success.txHash}
+          href={buildArcScanTransactionUrl(arcDeployment.explorerUrl, success.txHash)}
+        />
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button href={buildLaunchTokenPagePath(success.tokenAddress)}>View token page</Button>
+        <Button
+          href={buildArcScanTransactionUrl(arcDeployment.explorerUrl, success.txHash)}
+          rel="noreferrer"
+          target="_blank"
+          variant="secondary"
+        >
+          View on ArcScan
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 export function LaunchForm() {
   const nameId = useId();
   const symbolId = useId();
   const descriptionId = useId();
-  const logoId = useId();
-  const websiteId = useId();
-  const twitterId = useId();
-  const telegramId = useId();
-  const purchaseId = useId();
-  const creatorWalletId = useId();
 
   const [values, setValues] = useState<LaunchFormValues>(initialValues);
   const [touchedFields, setTouchedFields] = useState<Partial<Record<LaunchFieldName, boolean>>>({});
-  const [finalMessage, setFinalMessage] = useState<string | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [feedback, setFeedback] = useState<LaunchFeedback | null>(null);
+  const [success, setSuccess] = useState<LaunchSuccessState | null>(null);
+  const [configState, setConfigState] = useState<LaunchConfigState>({
+    data: null,
+    error: null,
+    isLoading: true
+  });
 
   const connection = useConnection();
-  const isConnected = connection.isConnected;
-  const isWrongNetwork = isConnected && connection.chainId !== arcTestnet.id;
+  const { mutateAsync: switchChainAsync, isPending: isSwitchPending } = useSwitchChain();
+  const { mutateAsync: writeContractAsync, isPending: isWritePending } = useWriteContract();
 
-  const allErrors = getAllErrors(values);
+  const walletAddress = connection.address ? getAddress(connection.address) : undefined;
+  const isConnected = connection.isConnected && Boolean(walletAddress);
+  const isWrongNetwork = isConnected && connection.chainId !== arcTestnet.id;
+  const maxMetadataUriLength = parseMaxMetadataUriLength(configState.data);
+  const metadataPreview = useMemo(() => getLaunchMetadataPreview(values), [values]);
+  const allErrors = useMemo(
+    () => getAllErrors(values, maxMetadataUriLength),
+    [maxMetadataUriLength, values]
+  );
   const hasValidationErrors = Object.keys(allErrors).length > 0;
-  const canLaunch = !hasValidationErrors && isConnected && !isWrongNetwork;
+  const isSubmitting =
+    isWritePending || isPendingLaunchPhase(feedback?.phase ?? null) || isSwitchPending;
+  const submitDisabledReason = getLaunchSubmitDisabledReason({
+    hasValidationErrors,
+    hasVerifiedConfig: maxMetadataUriLength !== null,
+    isConnected,
+    isFactoryPaused: configState.data?.factory.paused ?? false,
+    isSubmitting,
+    isWrongChain: isWrongNetwork,
+    isLoadingConfig: configState.isLoading
+  });
 
   useEffect(() => {
-    return () => {
-      if (values.logoPreviewUrl) {
-        URL.revokeObjectURL(values.logoPreviewUrl);
+    void refreshLaunchConfig();
+  }, []);
+
+  useEffect(() => {
+    if (!feedback) {
+      return;
+    }
+
+    if (isPendingLaunchPhase(feedback.phase)) {
+      return;
+    }
+
+    setFeedback(null);
+    setSuccess(null);
+  }, [feedback, values]);
+
+  async function refreshLaunchConfig() {
+    setConfigState((current) => ({
+      ...current,
+      error: null,
+      isLoading: true
+    }));
+
+    try {
+      const payload = await readJson<ArcLaunchConfigSuccess>(buildArcLaunchApiPath("config"));
+
+      if (!isArcLaunchConfigSuccess(payload)) {
+        throw {
+          ok: false,
+          code: "CONTRACT_READ_FAILED",
+          details: [
+            {
+              label: "Launch config",
+              message: "Unexpected launch config response."
+            }
+          ],
+          message: "Unexpected launch config response."
+        } satisfies ArcLaunchApiError;
       }
-    };
-  }, [values.logoPreviewUrl]);
+
+      setConfigState({
+        data: payload,
+        error: null,
+        isLoading: false
+      });
+    } catch (error) {
+      const routeError = isArcLaunchApiError(error)
+        ? getLaunchFeedbackFromApiError(error)
+        : {
+            phase: "rpc unavailable" as const,
+            message: getErrorMessage(
+              error,
+              "Unable to load the verified LaunchFactory configuration."
+            )
+          };
+
+      setConfigState({
+        data: null,
+        error: routeError,
+        isLoading: false
+      });
+    }
+  }
 
   function markFieldTouched(field: LaunchFieldName) {
     setTouchedFields((current) => ({
@@ -81,80 +377,244 @@ export function LaunchForm() {
     }));
   }
 
-  function handleTextChange(field: Exclude<LaunchFieldName, "logo">, nextValue: string) {
+  function handleTextChange(field: keyof LaunchFormValues, nextValue: string) {
     setValues((current) => ({
       ...current,
-      [field]:
-        field === "symbol"
-          ? sanitizeSymbol(nextValue)
-          : field === "initialPurchase"
-            ? sanitizePurchaseInput(nextValue)
-            : nextValue
+      [field]: nextValue
     }));
-    setFinalMessage(null);
   }
 
-  function handleLogoChange(file: File | null) {
-    setValues((current) => {
-      if (current.logoPreviewUrl) {
-        URL.revokeObjectURL(current.logoPreviewUrl);
-      }
-
-      if (!file) {
-        return {
-          ...current,
-          logoFile: null,
-          logoPreviewUrl: null
-        };
-      }
-
-      const nextPreviewUrl = URL.createObjectURL(file);
-
-      return {
-        ...current,
-        logoFile: file,
-        logoPreviewUrl: nextPreviewUrl
-      };
-    });
-
-    setTouchedFields((current) => ({
-      ...current,
-      logo: true
-    }));
-    setFinalMessage(null);
+  async function handleSwitchNetwork() {
+    try {
+      await switchChainAsync({
+        chainId: arcTestnet.id,
+        addEthereumChainParameter: {
+          blockExplorerUrls: [arcTestnet.blockExplorers.default.url],
+          chainName: arcTestnet.name,
+          nativeCurrency: arcTestnet.nativeCurrency,
+          rpcUrls: arcTestnet.rpcUrls.default.http
+        }
+      });
+    } catch (error) {
+      setFeedback(getLaunchFeedbackFromWalletError(error, "Unable to switch to Arc Testnet."));
+    }
   }
 
-  function handleLaunch(event: React.FormEvent<HTMLFormElement>) {
+  async function getInjectedProvider() {
+    const provider = (await connection.connector?.getProvider({
+      chainId: arcTestnet.id
+    })) as { request?: unknown } | undefined;
+
+    if (!provider || typeof provider.request !== "function") {
+      throw new Error("The connected browser wallet provider is unavailable.");
+    }
+
+    return provider as {
+      request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+    };
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setHasSubmitted(true);
 
-    if (!canLaunch) {
+    if (isSubmitting) {
       return;
     }
 
-    setFinalMessage(launchMessage);
+    setSuccess(null);
+    setFeedback({
+      phase: "validating",
+      message: "Validating the launch form before preparing the Arc Testnet transaction."
+    });
+
+    if (hasValidationErrors || !walletAddress) {
+      setFeedback(null);
+      return;
+    }
+
+    const localMetadata = buildLaunchMetadata({
+      name: values.name,
+      symbol: values.symbol,
+      description: values.description
+    });
+
+    setFeedback({
+      phase: "loading configuration",
+      message: "Fetching the latest verified LaunchFactory configuration."
+    });
+
+    let freshConfig: ArcLaunchConfigSuccess;
+
+    try {
+      freshConfig = await readJson<ArcLaunchConfigSuccess>(buildArcLaunchApiPath("config"));
+
+      if (!isArcLaunchConfigSuccess(freshConfig)) {
+        throw {
+          ok: false,
+          code: "CONTRACT_READ_FAILED",
+          details: [
+            {
+              label: "Launch config",
+              message: "Unexpected launch config response."
+            }
+          ],
+          message: "Unexpected launch config response."
+        } satisfies ArcLaunchApiError;
+      }
+    } catch (error) {
+      setFeedback(
+        isArcLaunchApiError(error)
+          ? getLaunchFeedbackFromApiError(error)
+          : {
+              phase: "rpc unavailable",
+              message: getErrorMessage(error, "Unable to refresh the LaunchFactory configuration.")
+            }
+      );
+      return;
+    }
+
+    setConfigState({
+      data: freshConfig,
+      error: null,
+      isLoading: false
+    });
+
+    const freshMaxMetadataUriLength = parseMaxMetadataUriLength(freshConfig);
+
+    if (
+      freshConfig.factory.paused ||
+      freshMaxMetadataUriLength === null ||
+      localMetadata.uriByteLength > freshMaxMetadataUriLength
+    ) {
+      setFeedback(
+        freshConfig.factory.paused
+          ? {
+              phase: "contract reverted",
+              message: "Launch creation is currently paused on the verified LaunchFactory."
+            }
+          : {
+              phase: "contract reverted",
+              message:
+                freshMaxMetadataUriLength === null
+                  ? "The factory metadata limit could not be read safely."
+                  : `Metadata URI exceeds the factory limit of ${freshMaxMetadataUriLength} bytes.`
+            }
+      );
+      return;
+    }
+
+    setFeedback({
+      phase: "simulating",
+      message: "Simulating the exact createLaunch call before opening the browser wallet."
+    });
+
+    try {
+      const simulation = await readJson(buildArcLaunchApiPath("simulate"), {
+        method: "POST",
+        body: JSON.stringify({
+          walletAddress,
+          name: values.name,
+          symbol: values.symbol,
+          metadataUri: localMetadata.uri
+        }),
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+
+      if (!isArcLaunchSimulationSuccess(simulation)) {
+        throw simulation;
+      }
+
+      const provider = await getInjectedProvider();
+
+      setFeedback({
+        phase: "wallet confirmation",
+        message: "Confirm the exact LaunchFactory createLaunch transaction in your browser wallet."
+      });
+
+      const txHash = (await writeContractAsync({
+        abi: launchFactoryAbi,
+        address: simulation.request.address,
+        account: simulation.request.account,
+        args: simulation.request.args,
+        chainId: arcTestnet.id,
+        functionName: simulation.request.functionName
+      })) as `0x${string}`;
+
+      setFeedback({
+        phase: "transaction pending",
+        message: "Launch transaction submitted. Waiting for the Arc Testnet receipt.",
+        txHash
+      });
+
+      const receipt = await waitForWalletTransactionReceipt(provider, txHash);
+
+      if (receipt.status !== "0x1") {
+        throw new Error("The createLaunch transaction reverted on-chain.");
+      }
+
+      const launchCreated = decodeLaunchCreatedEventFromReceipt(
+        receipt,
+        arcDeployment.factoryAddress
+      );
+
+      setSuccess({
+        launchId: launchCreated.launchId,
+        creator: launchCreated.creator,
+        factoryAddress: arcDeployment.factoryAddress,
+        poolAddress: launchCreated.launchPool,
+        tokenAddress: launchCreated.launchToken,
+        txHash
+      });
+      setFeedback({
+        phase: "success",
+        message: "Launch created successfully on Arc Testnet.",
+        txHash
+      });
+      void refreshLaunchConfig();
+    } catch (error) {
+      if (isArcLaunchApiError(error)) {
+        setFeedback(getLaunchFeedbackFromApiError(error));
+        return;
+      }
+
+      setFeedback(
+        getLaunchFeedbackFromWalletError(
+          error,
+          isWalletRejection(error)
+            ? "Request rejected in your browser wallet."
+            : "Launch creation failed."
+        )
+      );
+    }
   }
 
   const nameError = getFieldError("name", touchedFields, allErrors, hasSubmitted);
   const symbolError = getFieldError("symbol", touchedFields, allErrors, hasSubmitted);
   const descriptionError = getFieldError("description", touchedFields, allErrors, hasSubmitted);
-  const logoError = getFieldError("logo", touchedFields, allErrors, hasSubmitted);
-  const websiteError = getFieldError("website", touchedFields, allErrors, hasSubmitted);
-  const twitterError = getFieldError("twitter", touchedFields, allErrors, hasSubmitted);
-  const telegramError = getFieldError("telegram", touchedFields, allErrors, hasSubmitted);
-  const purchaseError = getFieldError("initialPurchase", touchedFields, allErrors, hasSubmitted);
-  const creatorWalletError = getFieldError("creatorWallet", touchedFields, allErrors, hasSubmitted);
+  const metadataError = getFieldError("metadata", touchedFields, allErrors, hasSubmitted);
+  const livePhase =
+    feedback?.phase ??
+    (configState.isLoading
+      ? ("loading configuration" as LaunchFeedbackPhase)
+      : !isConnected
+        ? ("disconnected" as LaunchFeedbackPhase)
+        : isWrongNetwork
+          ? ("wrong chain" as LaunchFeedbackPhase)
+          : ("idle" as LaunchFeedbackPhase));
 
   return (
     <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_23rem] xl:items-start">
-      <form className="space-y-6" noValidate onSubmit={handleLaunch}>
+      <form className="space-y-6" noValidate onSubmit={handleSubmit}>
         <Card className="space-y-8">
           <div className="space-y-3">
             <Link
               className="inline-flex items-center gap-2 rounded-full text-sm font-semibold text-cyan-200 transition hover:text-cyan-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
               href="/"
             >
-              <span aria-hidden="true">←</span>
+              <span aria-hidden="true">&larr;</span>
               Back to home
             </Link>
             <div>
@@ -162,8 +622,12 @@ export function LaunchForm() {
                 Launch a token
               </h1>
               <p className="mt-4 max-w-3xl text-base leading-8 text-slate-300">
-                Set your token details, add a logo and optional links, then review the live Arc
-                Testnet launch summary before deployment is enabled.
+                Create a standard LibrARC token through the verified Arc Testnet LaunchFactory with
+                your connected browser wallet. This phase submits the exact{" "}
+                <code className="rounded bg-white/6 px-2 py-1 text-sm text-cyan-100">
+                  createLaunch
+                </code>{" "}
+                call only.
               </p>
             </div>
           </div>
@@ -183,7 +647,7 @@ export function LaunchForm() {
                 className="h-full"
                 error={nameError}
                 errorId={`${nameId}-error`}
-                hint="Required. Trimmed length must be between 2 and 32 characters."
+                hint="Required. Validation trims whitespace and requires 2 to 32 characters."
                 hintClassName="min-h-12"
                 hintId={`${nameId}-hint`}
                 htmlFor={nameId}
@@ -213,7 +677,7 @@ export function LaunchForm() {
                 className="h-full"
                 error={symbolError}
                 errorId={`${symbolId}-error`}
-                hint="Required. Automatically uppercased. A-Z and 0-9 only."
+                hint="Required. Enter 2 to 10 characters using A-Z and 0-9 only."
                 hintClassName="min-h-12"
                 hintId={`${symbolId}-hint`}
                 htmlFor={symbolId}
@@ -225,7 +689,7 @@ export function LaunchForm() {
                     .filter(Boolean)
                     .join(" ")}
                   aria-invalid={Boolean(symbolError)}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white uppercase outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
                   id={symbolId}
                   maxLength={10}
                   onBlur={() => markFieldTouched("symbol")}
@@ -236,7 +700,7 @@ export function LaunchForm() {
                   value={values.symbol}
                 />
                 <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
-                  {values.symbol.length} / 10
+                  {getDisplayValue(values.symbol).length} / 10
                 </p>
               </LaunchField>
             </div>
@@ -244,7 +708,7 @@ export function LaunchForm() {
             <LaunchField
               error={descriptionError}
               errorId={`${descriptionId}-error`}
-              hint="Optional. When provided, leading and trailing whitespace are trimmed and the description must be 500 characters or fewer."
+              hint="Optional. Empty descriptions are omitted from the metadata JSON."
               hintId={`${descriptionId}-hint`}
               htmlFor={descriptionId}
               label="Description"
@@ -263,7 +727,7 @@ export function LaunchForm() {
                 maxLength={500}
                 onBlur={() => markFieldTouched("description")}
                 onChange={(event) => handleTextChange("description", event.target.value)}
-                placeholder="Tell traders what the token does, why it exists, and why this launch matters."
+                placeholder="Describe the token in one concise paragraph, or leave this blank."
                 value={values.description}
               />
               <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
@@ -272,253 +736,43 @@ export function LaunchForm() {
             </LaunchField>
           </section>
 
-          <section aria-labelledby="media-links-heading" className="space-y-6">
+          <section aria-labelledby="metadata-heading" className="space-y-6">
             <div>
               <h2
                 className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70"
-                id="media-links-heading"
+                id="metadata-heading"
               >
-                Media and links
+                Metadata preview
               </h2>
             </div>
 
-            <div className="grid gap-6">
-              <LaunchField
-                error={logoError}
-                errorId={`${logoId}-error`}
-                hint="Required. PNG, JPEG, or WebP only. Maximum file size: 2 MB."
-                hintId={`${logoId}-hint`}
-                htmlFor={logoId}
-                label="Token logo"
-                required
-              >
-                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_9rem]">
-                  <label
-                    className="flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-white/15 bg-slate-950/70 px-6 py-6 text-center transition hover:border-cyan-300/40 hover:bg-white/5"
-                    htmlFor={logoId}
-                  >
-                    <span className="text-sm font-semibold text-white">Choose logo image</span>
-                    <span className="mt-2 text-sm leading-6 text-slate-400">
-                      Preview locally only. No upload happens yet.
-                    </span>
-                  </label>
-
-                  <div className="flex min-h-36 items-center justify-center overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-950/80">
-                    {values.logoPreviewUrl ? (
-                      <Image
-                        alt={`${getDisplayValue(values.name) || "Token"} logo preview`}
-                        className="h-full w-full object-cover"
-                        height={144}
-                        src={values.logoPreviewUrl}
-                        unoptimized
-                        width={144}
-                      />
-                    ) : (
-                      <span className="px-4 text-center text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                        Preview
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <input
-                  accept="image/png,image/jpeg,image/webp"
-                  className="sr-only"
-                  id={logoId}
-                  onBlur={() => markFieldTouched("logo")}
-                  onChange={(event) => {
-                    const nextFile = event.target.files?.[0] ?? null;
-
-                    handleLogoChange(nextFile);
-                  }}
-                  type="file"
-                />
-
-                {values.logoFile ? (
-                  <p className="text-sm leading-6 text-slate-400">
-                    Selected file: {values.logoFile.name}
-                  </p>
-                ) : null}
-              </LaunchField>
-
-              <div className="grid gap-6 md:grid-cols-2">
-                <LaunchField
-                  error={websiteError}
-                  errorId={`${websiteId}-error`}
-                  hint="Optional. HTTPS URLs only."
-                  hintId={`${websiteId}-hint`}
-                  htmlFor={websiteId}
-                  label="Website"
+            <div className="space-y-4 rounded-[1.5rem] border border-white/10 bg-white/4 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-white">Deterministic metadata URI</p>
+                <p
+                  className={[
+                    "text-xs font-semibold uppercase tracking-[0.24em]",
+                    metadataError ? "text-rose-200" : "text-cyan-100/70"
+                  ].join(" ")}
                 >
-                  <input
-                    aria-describedby={[
-                      `${websiteId}-hint`,
-                      websiteError ? `${websiteId}-error` : ""
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    aria-invalid={Boolean(websiteError)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                    id={websiteId}
-                    onBlur={() => markFieldTouched("website")}
-                    onChange={(event) => handleTextChange("website", event.target.value)}
-                    placeholder="https://project.xyz"
-                    type="url"
-                    value={values.website}
-                  />
-                </LaunchField>
-
-                <LaunchField
-                  error={twitterError}
-                  errorId={`${twitterId}-error`}
-                  hint="Optional. Valid x.com or twitter.com profile URL only."
-                  hintId={`${twitterId}-hint`}
-                  htmlFor={twitterId}
-                  label="X / Twitter"
-                >
-                  <input
-                    aria-describedby={[
-                      `${twitterId}-hint`,
-                      twitterError ? `${twitterId}-error` : ""
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    aria-invalid={Boolean(twitterError)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                    id={twitterId}
-                    onBlur={() => markFieldTouched("twitter")}
-                    onChange={(event) => handleTextChange("twitter", event.target.value)}
-                    placeholder="https://x.com/arcproject"
-                    type="url"
-                    value={values.twitter}
-                  />
-                </LaunchField>
+                  {maxMetadataUriLength === null
+                    ? `${metadataPreview.uriByteLength} bytes`
+                    : `${metadataPreview.uriByteLength} / ${maxMetadataUriLength} bytes`}
+                </p>
               </div>
-
-              <LaunchField
-                error={telegramError}
-                errorId={`${telegramId}-error`}
-                hint="Optional. Valid t.me or telegram.me URL only."
-                hintId={`${telegramId}-hint`}
-                htmlFor={telegramId}
-                label="Telegram"
-              >
-                <input
-                  aria-describedby={[
-                    `${telegramId}-hint`,
-                    telegramError ? `${telegramId}-error` : ""
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-invalid={Boolean(telegramError)}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                  id={telegramId}
-                  onBlur={() => markFieldTouched("telegram")}
-                  onChange={(event) => handleTextChange("telegram", event.target.value)}
-                  placeholder="https://t.me/arcproject"
-                  type="url"
-                  value={values.telegram}
-                />
-              </LaunchField>
-            </div>
-          </section>
-
-          <section aria-labelledby="purchase-heading" className="space-y-6">
-            <div>
-              <h2
-                className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70"
-                id="purchase-heading"
-              >
-                Initial purchase
-              </h2>
-            </div>
-
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.42fr)]">
-              <LaunchField
-                error={purchaseError}
-                errorId={`${purchaseId}-error`}
-                hint="Optional. Displayed in USDC only. No transaction logic is wired yet."
-                hintId={`${purchaseId}-hint`}
-                htmlFor={purchaseId}
-                label="Initial creator purchase in USDC"
-              >
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-cyan-100/80">
-                    USDC
-                  </span>
-                  <input
-                    aria-describedby={[
-                      `${purchaseId}-hint`,
-                      purchaseError ? `${purchaseId}-error` : ""
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    aria-invalid={Boolean(purchaseError)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/80 py-3 pl-18 pr-4 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                    id={purchaseId}
-                    inputMode="decimal"
-                    onBlur={() => markFieldTouched("initialPurchase")}
-                    onChange={(event) => handleTextChange("initialPurchase", event.target.value)}
-                    placeholder="0.00"
-                    type="text"
-                    value={values.initialPurchase}
-                  />
-                </div>
-              </LaunchField>
-
-              <Card className="rounded-[1.5rem] border-white/10 bg-white/4 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/70">
-                  Display preview
+              <pre className="overflow-x-auto rounded-[1.25rem] border border-white/10 bg-slate-950/80 p-4 text-sm leading-6 text-slate-200">
+                <code>{metadataPreview.json}</code>
+              </pre>
+              <p className="text-sm leading-6 text-slate-400">
+                The metadata is encoded as a compact <code>data:application/json</code> URI and
+                submitted directly to the LaunchFactory. Description is omitted when left empty.
+              </p>
+              {metadataError ? (
+                <p className="text-sm leading-6 text-rose-200" id="metadata-error">
+                  {metadataError}
                 </p>
-                <p className="mt-3 text-sm leading-7 text-slate-400">
-                  This amount stays in local component state and appears in the launch summary.
-                </p>
-                <p className="mt-5 text-2xl font-semibold tracking-tight text-white">
-                  {getDisplayValue(values.initialPurchase)
-                    ? `${getDisplayValue(values.initialPurchase)} USDC`
-                    : "Not set"}
-                </p>
-              </Card>
+              ) : null}
             </div>
-          </section>
-
-          <section aria-labelledby="advanced-options-heading" className="space-y-4">
-            <details className="rounded-[1.5rem] border border-white/10 bg-white/4 px-5 py-4">
-              <summary
-                className="cursor-pointer list-none text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/80 outline-none marker:hidden"
-                id="advanced-options-heading"
-              >
-                Advanced options
-              </summary>
-              <div className="mt-5 space-y-5">
-                <LaunchField
-                  error={creatorWalletError}
-                  errorId={`${creatorWalletId}-error`}
-                  hint="Leave empty to use the connected wallet. When provided, it must be a valid EVM address."
-                  hintId={`${creatorWalletId}-hint`}
-                  htmlFor={creatorWalletId}
-                  label="Creator wallet address"
-                >
-                  <input
-                    aria-describedby={[
-                      `${creatorWalletId}-hint`,
-                      creatorWalletError ? `${creatorWalletId}-error` : ""
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    aria-invalid={Boolean(creatorWalletError)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                    id={creatorWalletId}
-                    onBlur={() => markFieldTouched("creatorWallet")}
-                    onChange={(event) => handleTextChange("creatorWallet", event.target.value)}
-                    placeholder="0x1234...abcd"
-                    spellCheck={false}
-                    type="text"
-                    value={values.creatorWallet}
-                  />
-                </LaunchField>
-              </div>
-            </details>
           </section>
 
           <section
@@ -533,60 +787,100 @@ export function LaunchForm() {
                 Final action
               </h2>
               <p className="mt-3 text-sm leading-7 text-slate-400">
-                Connect an injected wallet on Arc Testnet to enable the launch action. No contract
-                deployment, signature, or transaction is sent yet.
+                The server only reads LaunchFactory configuration and simulates the exact
+                transaction. The connected browser wallet is the only signer.
               </p>
             </div>
+
             <Card className="space-y-4 rounded-[1.5rem] border-white/10 bg-white/4">
               <div className="rounded-[1.25rem] border border-white/10 bg-slate-950/70 p-4">
-                <p className="text-sm text-slate-400">Connection status</p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-slate-400">Launch state</p>
+                  <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-100">
+                    {livePhase}
+                  </span>
+                </div>
                 <p className="mt-2 text-base font-semibold text-white">
                   {!isConnected
                     ? "Wallet not connected"
                     : isWrongNetwork
                       ? `Connected to ${connection.chain?.name ?? "the wrong network"}`
-                      : `Connected to ${connection.chain?.name ?? arcTestnet.name}`}
+                      : `Connected as ${walletAddress ? formatAddress(walletAddress) : "unknown"}`}
                 </p>
-                {!isConnected ? (
-                  <p className="mt-2 text-sm leading-6 text-slate-400">
-                    Connect a browser wallet to continue.
-                  </p>
-                ) : null}
-                {isWrongNetwork ? (
-                  <p className="mt-2 text-sm leading-6 text-amber-100">
-                    Use the wallet control below to switch to Arc Testnet before launching.
-                  </p>
-                ) : null}
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  {configState.isLoading
+                    ? "Loading the verified Arc Testnet LaunchFactory configuration."
+                    : configState.data?.factory.paused
+                      ? "Launch creation is currently paused on the verified LaunchFactory."
+                      : `Factory ${formatAddress(arcDeployment.factoryAddress)} is ready for createLaunch.`}
+                </p>
               </div>
 
-              {!isConnected || isWrongNetwork ? (
+              <p className="text-sm leading-6 text-amber-100">{ARC_TESTNET_NOTICE}</p>
+
+              {!isConnected ? (
                 <div className="flex justify-start">
                   <WalletConnectButton />
                 </div>
+              ) : isWrongNetwork ? (
+                <Button
+                  disabled={isSwitchPending}
+                  onClick={() => {
+                    void handleSwitchNetwork();
+                  }}
+                  type="button"
+                >
+                  {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
+                </Button>
               ) : (
-                <Button disabled={!canLaunch} type="submit">
-                  Launch Token
+                <Button disabled={Boolean(submitDisabledReason)} type="submit">
+                  {isSubmitting ? "Launch in progress..." : "Launch Token"}
                 </Button>
               )}
 
-              {hasSubmitted && hasValidationErrors ? (
-                <p className="rounded-[1.25rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm leading-6 text-rose-100">
-                  Fix the validation errors in the form before launching.
-                </p>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  disabled={configState.isLoading}
+                  onClick={() => {
+                    void refreshLaunchConfig();
+                  }}
+                  type="button"
+                  variant="secondary"
+                >
+                  {configState.isLoading ? "Refreshing..." : "Refresh config"}
+                </Button>
+                <Link
+                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 px-4 text-sm font-semibold text-slate-100 transition hover:border-cyan-300/40 hover:bg-white/8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                  href={buildArcScanAddressUrl(
+                    arcDeployment.explorerUrl,
+                    arcDeployment.factoryAddress
+                  )}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  View Factory on ArcScan
+                </Link>
+              </div>
+
+              {submitDisabledReason ? (
+                <p className="text-sm leading-6 text-slate-400">{submitDisabledReason}</p>
               ) : null}
             </Card>
           </section>
         </Card>
 
-        {finalMessage ? (
-          <p className="rounded-[1.5rem] border border-cyan-300/20 bg-cyan-300/10 px-5 py-4 text-sm leading-6 text-cyan-100">
-            {finalMessage}
-          </p>
-        ) : null}
+        {success ? <SuccessPanel success={success} /> : null}
+        <FeedbackCard feedback={feedback ?? configState.error} />
       </form>
 
       <aside className="space-y-6 xl:sticky xl:top-24 xl:self-start">
-        <LaunchSummary connectedWalletAddress={connection.address} values={values} />
+        <LaunchSummary
+          connectedWalletAddress={walletAddress}
+          maxMetadataUriLength={maxMetadataUriLength}
+          metadataUriByteLength={metadataPreview.uriByteLength}
+          paused={configState.data?.factory.paused ?? false}
+          values={values}
+        />
       </aside>
     </div>
   );
