@@ -8,3 +8,4 @@ export * from "./trade-api";
 export * from "./trading";
 export * from "./launches-api";
 export * from "./launches-server";
+export * from "./profile-api";

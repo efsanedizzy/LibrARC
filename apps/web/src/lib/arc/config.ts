@@ -1,6 +1,7 @@
 import { getAddress, isAddress, type Address } from "viem";
 
 export const ARC_TESTNET_CHAIN_ID = 5042002;
+export const ARC_FACTORY_DEPLOYMENT_BLOCK = 54_593_744n;
 
 const VERIFIED_RPC_URL = "https://rpc.testnet.arc.network";
 const VERIFIED_EXPLORER_URL = "https://testnet.arcscan.app";
