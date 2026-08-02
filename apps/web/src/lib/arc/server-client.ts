@@ -17,6 +17,12 @@ const DEFAULT_ARC_TESTNET_RPC_URLS = [
   "https://rpc.quicknode.testnet.arc.network",
   "https://rpc.blockdaemon.testnet.arc.network"
 ] as const;
+export const ARC_SERVER_RPC_ENV_NAMES = [
+  "ARC_TESTNET_RPC_URL",
+  "ARC_TESTNET_RPC_FALLBACK_URL_1",
+  "ARC_TESTNET_RPC_FALLBACK_URL_2",
+  "ARC_TESTNET_RPC_FALLBACK_URL_3"
+] as const;
 
 export const ARC_SERVER_RPC_TIMEOUT_MS = 8_000;
 export const ARC_SERVER_RPC_RETRY_COUNT = 2;
@@ -25,13 +31,7 @@ export const ARC_SERVER_FALLBACK_RETRY_COUNT = 0;
 export const ARC_SERVER_FALLBACK_RETRY_DELAY_MS = 200;
 
 type ArcServerRpcEnvironment = Partial<
-  Record<
-    | "ARC_TESTNET_RPC_URL"
-    | "ARC_TESTNET_RPC_FALLBACK_URL_1"
-    | "ARC_TESTNET_RPC_FALLBACK_URL_2"
-    | "ARC_TESTNET_RPC_FALLBACK_URL_3",
-    string | undefined
-  >
+  Record<(typeof ARC_SERVER_RPC_ENV_NAMES)[number], string | undefined>
 >;
 
 let cachedRpcSignature: string | null = null;
