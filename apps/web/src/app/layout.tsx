@@ -9,10 +9,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "LibrARC | Crypto Launchpad",
+    default: "LibrARC | Arc Testnet Launchpad",
     template: "%s | LibrARC"
   },
-  description: "Responsive dark crypto launchpad interface built with the Next.js App Router."
+  description:
+    "Discover, launch, and monitor Arc Testnet tokens through a refined crypto-native interface."
 };
 
 export default function RootLayout({
@@ -22,16 +23,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="flex min-h-screen flex-col bg-slate-950 text-slate-100 antialiased">
+      <body className="app-shell flex min-h-screen flex-col bg-[var(--bg-canvas)] text-[var(--text-primary)] antialiased">
         <Web3Provider>
           <a
-            className="skip-link absolute left-4 top-4 z-50 rounded-full bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950"
+            className="skip-link absolute left-4 top-4 z-50 rounded-full bg-[var(--accent-strong)] px-4 py-2 text-sm font-semibold text-slate-950"
             href="#content"
           >
             Skip to content
           </a>
           <Navbar />
-          <div className="flex flex-1 flex-col" id="content">
+          <div className="relative flex flex-1 flex-col" id="content">
             {children}
           </div>
           <Footer />

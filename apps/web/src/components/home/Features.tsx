@@ -1,61 +1,61 @@
 import { Container } from "../layout/Container";
-import { Card } from "../ui/Card";
 
 const features = [
   {
-    eyebrow: "Discovery",
-    title: "Trending signal boards",
+    eyebrow: "Verified",
+    title: "Factory-backed launch discovery",
     description:
-      "Monitor breakout tokens, watch momentum shifts, and jump into token detail routes without leaving the homepage."
+      "Every Discover card still resolves against the active Arc Testnet registry instead of a mock feed."
   },
   {
-    eyebrow: "Creators",
-    title: "Launch-first workflows",
+    eyebrow: "Usable",
+    title: "Readable cards with real signal",
     description:
-      "Push users toward the existing launch route with clear calls to action that fit the rest of the launchpad shell."
+      "Reserve depth, graduation progress, and buy or sell availability stay visible without overwhelming the page."
   },
   {
-    eyebrow: "Profiles",
-    title: "Connected creator identity",
+    eyebrow: "Fast",
+    title: "Wallet-optional browsing",
     description:
-      "Keep profile access visible so traders can move from market discovery to creator context in one tap."
+      "The refreshed home page keeps browsing open to disconnected users while preserving the existing launch, token, and profile routes."
   }
 ];
 
 export function Features() {
   return (
-    <section aria-labelledby="features-title" className="py-16 sm:py-20" id="features">
+    <section aria-labelledby="features-title" className="pb-6 pt-6 sm:pb-8 sm:pt-8" id="features">
       <Container>
-        <div className="max-w-2xl">
-          <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70">
-            Platform features
-          </p>
-          <h2
-            className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl"
-            id="features-title"
-          >
-            Built for fast-moving launch cycles.
-          </h2>
-          <p className="mt-4 text-base leading-7 text-slate-400">
-            The interface stays focused on discovery, launch actions, and route-level navigation
-            while keeping everything static and implementation-safe.
-          </p>
-        </div>
+        <div className="surface-panel rounded-[var(--radius-xl)] px-6 py-8 sm:px-8 sm:py-10">
+          <div className="max-w-3xl">
+            <p className="eyebrow">Why this phase matters</p>
+            <h2
+              className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl"
+              id="features-title"
+            >
+              The first redesign pass turns the technical MVP into a calmer launch surface.
+            </h2>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-[var(--text-muted)]">
+              The working Arc flow stays exactly as it is. This phase focuses on trust, spacing,
+              hierarchy, and a better reading experience for live Discover activity.
+            </p>
+          </div>
 
-        <div className="mt-10 grid gap-5 lg:grid-cols-3">
-          {features.map((feature) => (
-            <article key={feature.title}>
-              <Card className="h-full">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-100/70">
-                  {feature.eyebrow}
-                </p>
-                <h3 className="mt-4 text-2xl font-semibold tracking-tight text-white">
+          <div className="mt-8 grid gap-4 lg:grid-cols-3">
+            {features.map((feature) => (
+              <article
+                className="surface-muted rounded-[var(--radius-lg)] px-5 py-5"
+                key={feature.title}
+              >
+                <p className="eyebrow text-[var(--text-faint)]">{feature.eyebrow}</p>
+                <h3 className="mt-4 text-xl font-semibold tracking-tight text-white">
                   {feature.title}
                 </h3>
-                <p className="mt-4 text-sm leading-7 text-slate-400">{feature.description}</p>
-              </Card>
-            </article>
-          ))}
+                <p className="mt-3 text-sm leading-7 text-[var(--text-muted)]">
+                  {feature.description}
+                </p>
+              </article>
+            ))}
+          </div>
         </div>
       </Container>
     </section>

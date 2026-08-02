@@ -1,13 +1,5 @@
-import { Features } from "../components/home/Features";
-import { Hero } from "../components/home/Hero";
-import { TrendingTokens } from "../components/home/TrendingTokens";
+import { HomePageClient } from "../components/home/HomePageClient";
 
 export default function HomePage() {
-  return (
-    <main className="flex-1">
-      <Hero />
-      <Features />
-      <TrendingTokens />
-    </main>
-  );
+  return <HomePageClient />;
 }
