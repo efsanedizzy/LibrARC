@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { BaseError, useConnection, useSwitchChain, useWriteContract } from "wagmi";
-import { type Address, getAddress } from "viem";
+import { formatUnits, type Address, getAddress } from "viem";
 
 import { erc20Abi, launchPoolAbi } from "../../lib/arc/abis";
 import { arcDeployment } from "../../lib/arc/config";
@@ -36,7 +36,6 @@ import {
 import { arcTestnet } from "../../lib/chains/arc-testnet";
 import { type ArcTokenApiSuccess } from "../../lib/arc/token-api";
 import { Button } from "../ui/Button";
-import { Card } from "../ui/Card";
 import { WalletConnectButton } from "../wallet/WalletConnectButton";
 
 type TokenTradePanelProps = {
@@ -164,72 +163,120 @@ function formatAllowance(value: bigint, decimals: number, symbol: string) {
   return `${formatTokenAmount(value, decimals)} ${symbol}`;
 }
 
-function StatusBadge({
-  children,
-  tone = "neutral"
-}: {
-  children: string;
-  tone?: "neutral" | "success" | "warning";
-}) {
-  const toneClassName =
-    tone === "success"
-      ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-100"
-      : tone === "warning"
-        ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
-        : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100";
-
-  return (
-    <span
-      className={[
-        "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em]",
-        toneClassName
-      ].join(" ")}
-    >
-      {children}
-    </span>
-  );
+function formatPhaseLabel(phase: TradePhase) {
+  switch (phase) {
+    case "approval required":
+      return "Approval required";
+    case "approval confirmed":
+      return "Approval confirmed";
+    case "wallet confirmation":
+      return "Confirm in wallet";
+    case "transaction pending":
+      return "Transaction pending";
+    case "rejected by user":
+      return "Wallet rejection";
+    case "rpc unavailable":
+      return "RPC unavailable";
+    default:
+      return phase.charAt(0).toUpperCase() + phase.slice(1);
+  }
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-4">
-      <dt className="text-sm text-slate-400">{label}</dt>
+      <dt className="text-sm text-[var(--text-muted)]">{label}</dt>
       <dd className="text-right text-sm font-medium text-white">{value}</dd>
     </div>
   );
 }
 
-function FeedbackCard({ feedback }: { feedback: TradeFeedback | null }) {
+function TradeStatusPill({
+  label,
+  tone
+}: {
+  label: string;
+  tone: "neutral" | "success" | "warning" | "danger";
+}) {
+  const className =
+    tone === "success"
+      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
+      : tone === "warning"
+        ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+        : tone === "danger"
+          ? "border-rose-300/20 bg-rose-300/10 text-rose-100"
+          : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100";
+
+  return (
+    <span
+      className={[
+        "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em]",
+        className
+      ].join(" ")}
+    >
+      {label}
+    </span>
+  );
+}
+
+function FeedbackCard({
+  feedback,
+  onDismiss,
+  onStartAnotherTrade
+}: {
+  feedback: TradeFeedback | null;
+  onDismiss: () => void;
+  onStartAnotherTrade: () => void;
+}) {
   if (!feedback) {
     return null;
   }
 
   const tone =
     feedback.phase === "success"
-      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-50"
+      ? "border-emerald-300/18 bg-emerald-300/8 text-emerald-50"
       : feedback.phase === "approval confirmed"
-        ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-50"
+        ? "border-cyan-300/18 bg-cyan-300/8 text-cyan-50"
         : feedback.phase === "rejected by user"
-          ? "border-amber-300/20 bg-amber-300/10 text-amber-50"
-          : "border-rose-300/20 bg-rose-300/10 text-rose-50";
+          ? "border-amber-300/18 bg-amber-300/8 text-amber-50"
+          : "border-rose-300/18 bg-rose-300/8 text-rose-50";
+  const heading =
+    feedback.phase === "success"
+      ? "Trade confirmed"
+      : feedback.phase === "rejected by user"
+        ? "Wallet request rejected"
+        : feedback.phase === "rpc unavailable"
+          ? "RPC unavailable"
+          : feedback.phase === "approval confirmed"
+            ? "Approval confirmed"
+            : "Trade update";
+
+  const receivedDetail = feedback.details?.find((detail) =>
+    detail.label.toLowerCase().includes("received")
+  );
+  const receivedAmount = receivedDetail?.message;
 
   return (
-    <div className={`space-y-3 rounded-3xl border p-4 ${tone}`}>
+    <div
+      aria-live="polite"
+      className={`space-y-4 rounded-[var(--radius-lg)] border px-4 py-4 sm:px-5 ${tone}`}
+    >
       <div className="flex flex-wrap items-center gap-3">
-        <StatusBadge
+        <TradeStatusPill
+          label={formatPhaseLabel(feedback.phase)}
           tone={
             feedback.phase === "success"
               ? "success"
               : feedback.phase === "rejected by user"
                 ? "warning"
-                : "neutral"
+                : feedback.phase === "approval confirmed"
+                  ? "neutral"
+                  : "danger"
           }
-        >
-          {feedback.phase}
-        </StatusBadge>
+        />
         {feedback.txHash ? (
           <Link
-            className="text-sm font-semibold text-cyan-100 transition hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+            className="text-sm font-semibold text-cyan-100 transition hover:text-white"
             href={buildExplorerTransactionUrl(arcDeployment.explorerUrl, feedback.txHash)}
             rel="noreferrer"
             target="_blank"
@@ -238,18 +285,49 @@ function FeedbackCard({ feedback }: { feedback: TradeFeedback | null }) {
           </Link>
         ) : null}
       </div>
-      <p className="text-sm leading-6">{feedback.message}</p>
+
+      <div>
+        <h3 className="text-base font-semibold text-white">{heading}</h3>
+        <p className="mt-2 text-sm leading-6">{feedback.message}</p>
+      </div>
+
+      {feedback.phase === "success" && feedback.txHash ? (
+        <div className="surface-muted rounded-[var(--radius-md)] p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+            Confirmed receipt
+          </p>
+          <div className="mt-3 space-y-2 text-sm text-white">
+            <p>Transaction hash: {shortenHash(feedback.txHash)}</p>
+            {receivedAmount ? <p>Received: {receivedAmount}</p> : null}
+            <p>Balances and pool state refresh after confirmation.</p>
+          </div>
+        </div>
+      ) : null}
+
       {feedback.details && feedback.details.length > 0 ? (
-        <details className="rounded-2xl border border-white/10 bg-slate-950/35 p-4">
-          <summary className="cursor-pointer text-sm font-semibold">Technical details</summary>
-          <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-100/90">
+        <details className="surface-muted rounded-[var(--radius-md)] p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-white">
+            Technical details
+          </summary>
+          <ul className="mt-3 space-y-2 text-sm leading-6 text-[var(--text-secondary)]">
             {feedback.details.map((detail) => (
-              <li key={detail.label}>
+              <li key={`${detail.label}-${detail.message}`}>
                 <span className="font-semibold text-white">{detail.label}:</span> {detail.message}
               </li>
             ))}
           </ul>
         </details>
+      ) : null}
+
+      {feedback.phase === "success" ? (
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={onDismiss} size="sm" variant="secondary">
+            Dismiss
+          </Button>
+          <Button onClick={onStartAnotherTrade} size="sm" variant="ghost">
+            Start another trade
+          </Button>
+        </div>
       ) : null}
     </div>
   );
@@ -262,12 +340,7 @@ function getFeedbackFromTradeError(
 ): TradeFeedback {
   return {
     mode,
-    phase:
-      error.code === "RPC_UNAVAILABLE"
-        ? "rpc unavailable"
-        : error.code === "SIMULATION_REVERTED"
-          ? "reverted"
-          : "reverted",
+    phase: error.code === "RPC_UNAVAILABLE" ? "rpc unavailable" : "reverted",
     message: error.revert?.reason || error.revert?.message || error.message || fallback,
     details: [
       ...error.details,
@@ -281,6 +354,103 @@ function getFeedbackFromTradeError(
         : [])
     ]
   };
+}
+
+function getActionButtonLabel({
+  activeMode,
+  approvalRequired,
+  disabledReason,
+  feedback,
+  isConnected,
+  isPageLoading,
+  isWrongChain,
+  quoteState,
+  tradeData
+}: {
+  activeMode: TradeMode;
+  approvalRequired: boolean;
+  disabledReason: string | null;
+  feedback: TradeFeedback | null;
+  isConnected: boolean;
+  isPageLoading: boolean;
+  isWrongChain: boolean;
+  quoteState: QuoteState;
+  tradeData: ArcTokenApiSuccess | null;
+}) {
+  if (!isConnected) {
+    return "Connect wallet";
+  }
+
+  if (isWrongChain) {
+    return "Switch to Arc Testnet";
+  }
+
+  if (!tradeData || isPageLoading) {
+    return "Loading token data";
+  }
+
+  if (
+    feedback?.mode === activeMode &&
+    (feedback.phase === "wallet confirmation" || feedback.phase === "quoting")
+  ) {
+    return "Confirm in wallet";
+  }
+
+  if (feedback?.mode === activeMode && feedback.phase === "transaction pending") {
+    return "Transaction pending";
+  }
+
+  if (feedback?.mode === activeMode && feedback.phase === "approving") {
+    return "Approving exact amount...";
+  }
+
+  if (feedback?.mode === activeMode && feedback.phase === "approval confirmed") {
+    return "Approval confirmed";
+  }
+
+  if (quoteState.status === "loading") {
+    return "Getting quote";
+  }
+
+  if (approvalRequired) {
+    return "Approval required";
+  }
+
+  if (disabledReason === "Enter a USDC amount." || disabledReason?.startsWith("Enter a ")) {
+    return "Enter an amount";
+  }
+
+  if (disabledReason?.includes("unavailable") || disabledReason?.includes("Active")) {
+    return "Trading unavailable";
+  }
+
+  return activeMode === "buy" ? "Buy tokens" : "Sell tokens";
+}
+
+function getApprovalSummary({
+  activeMode,
+  approvalRequired,
+  feedback,
+  tokenSymbol
+}: {
+  activeMode: TradeMode;
+  approvalRequired: boolean;
+  feedback: TradeFeedback | null;
+  tokenSymbol: string;
+}) {
+  if (feedback?.mode === activeMode && feedback.phase === "approving") {
+    return "Approving exact amount...";
+  }
+
+  if (feedback?.mode === activeMode && feedback.phase === "approval confirmed") {
+    return "Approval confirmed";
+  }
+
+  if (approvalRequired) {
+    return "Approval required";
+  }
+
+  return activeMode === "buy" ? "Ready to buy" : `Ready to sell ${tokenSymbol}`;
 }
 
 export function TokenTradePanel({
@@ -370,7 +540,7 @@ export function TokenTradePanel({
       : null;
 
   useEffect(() => {
-    if (feedback && TERMINAL_PHASES.has(feedback.phase)) {
+    if (feedback && TERMINAL_PHASES.has(feedback.phase) && feedback.phase !== "success") {
       setFeedback(null);
     }
   }, [
@@ -413,15 +583,11 @@ export function TokenTradePanel({
     }
 
     const abortController = new AbortController();
-
     setBuyQuoteState({ status: "loading" });
 
     void postJson(
       buildArcTradeApiPath(tokenAddress, "quote-buy"),
-      {
-        walletAddress,
-        usdcAmount: buyInput
-      },
+      { walletAddress, usdcAmount: buyInput },
       { signal: abortController.signal }
     )
       .then((payload) => {
@@ -430,19 +596,11 @@ export function TokenTradePanel({
             ok: false,
             code: "RPC_UNAVAILABLE",
             message: "Unexpected buy quote response.",
-            details: [
-              {
-                label: "quote-buy",
-                message: "Unexpected buy quote response."
-              }
-            ]
+            details: [{ label: "quote-buy", message: "Unexpected buy quote response." }]
           } satisfies ArcTradeApiError;
         }
 
-        setBuyQuoteState({
-          status: "ready",
-          data: payload
-        });
+        setBuyQuoteState({ status: "ready", data: payload });
       })
       .catch((error) => {
         if (abortController.signal.aborted) {
@@ -502,15 +660,11 @@ export function TokenTradePanel({
     }
 
     const abortController = new AbortController();
-
     setSellQuoteState({ status: "loading" });
 
     void postJson(
       buildArcTradeApiPath(tokenAddress, "quote-sell"),
-      {
-        walletAddress,
-        tokenAmount: sellInput
-      },
+      { walletAddress, tokenAmount: sellInput },
       { signal: abortController.signal }
     )
       .then((payload) => {
@@ -519,19 +673,11 @@ export function TokenTradePanel({
             ok: false,
             code: "RPC_UNAVAILABLE",
             message: "Unexpected sell quote response.",
-            details: [
-              {
-                label: "quote-sell",
-                message: "Unexpected sell quote response."
-              }
-            ]
+            details: [{ label: "quote-sell", message: "Unexpected sell quote response." }]
           } satisfies ArcTradeApiError;
         }
 
-        setSellQuoteState({
-          status: "ready",
-          data: payload
-        });
+        setSellQuoteState({ status: "ready", data: payload });
       })
       .catch((error) => {
         if (abortController.signal.aborted) {
@@ -652,14 +798,8 @@ export function TokenTradePanel({
       phase: "wallet confirmation",
       message: `Confirm the exact ${asset.toUpperCase()} approval in your wallet.`,
       details: [
-        {
-          label: "Spender",
-          message: poolAddress
-        },
-        {
-          label: "Amount",
-          message: amount.toString(10)
-        }
+        { label: "Spender", message: poolAddress },
+        { label: "Amount", message: amount.toString(10) }
       ]
     });
 
@@ -702,11 +842,7 @@ export function TokenTradePanel({
     const disabledReason = getBuyDisabledReason();
 
     if (disabledReason) {
-      setFeedback({
-        mode: "buy",
-        phase: "reverted",
-        message: disabledReason
-      });
+      setFeedback({ mode: "buy", phase: "reverted", message: disabledReason });
       return;
     }
 
@@ -799,7 +935,13 @@ export function TokenTradePanel({
         mode: "buy",
         phase: "transaction pending",
         message: "Buy submitted. Waiting for the Arc Testnet receipt in your wallet provider.",
-        txHash: hash
+        txHash: hash,
+        details: [
+          {
+            label: "Expected received amount",
+            message: formatTokenAmount(BigInt(simulation.tokenAmountOut), tokenDecimals)
+          }
+        ]
       });
 
       const receipt = await waitForWalletTransactionReceipt(provider, hash);
@@ -813,7 +955,13 @@ export function TokenTradePanel({
         phase: "success",
         message:
           "Buy confirmed. Refreshing balances, allowances, reserves, and graduation progress.",
-        txHash: hash
+        txHash: hash,
+        details: [
+          {
+            label: "Received amount",
+            message: formatTokenAmount(BigInt(simulation.tokenAmountOut), tokenDecimals)
+          }
+        ]
       });
       onRefresh();
     } catch (error) {
@@ -838,11 +986,7 @@ export function TokenTradePanel({
     const disabledReason = getSellDisabledReason();
 
     if (disabledReason) {
-      setFeedback({
-        mode: "sell",
-        phase: "reverted",
-        message: disabledReason
-      });
+      setFeedback({ mode: "sell", phase: "reverted", message: disabledReason });
       return;
     }
 
@@ -935,7 +1079,13 @@ export function TokenTradePanel({
         mode: "sell",
         phase: "transaction pending",
         message: "Sell submitted. Waiting for the Arc Testnet receipt in your wallet provider.",
-        txHash: hash
+        txHash: hash,
+        details: [
+          {
+            label: "Expected received amount",
+            message: `${formatUsdcAmount(BigInt(simulation.netUsdcAmountOut))} USDC`
+          }
+        ]
       });
 
       const receipt = await waitForWalletTransactionReceipt(provider, hash);
@@ -948,7 +1098,13 @@ export function TokenTradePanel({
         mode: "sell",
         phase: "success",
         message: "Sell confirmed. Refreshing balances, allowances, reserves, and curve state.",
-        txHash: hash
+        txHash: hash,
+        details: [
+          {
+            label: "Received amount",
+            message: `${formatUsdcAmount(BigInt(simulation.netUsdcAmountOut))} USDC`
+          }
+        ]
       });
       onRefresh();
     } catch (error) {
@@ -967,38 +1123,102 @@ export function TokenTradePanel({
 
   const buyDisabledReason = getBuyDisabledReason();
   const sellDisabledReason = getSellDisabledReason();
+  const activeDisabledReason = activeMode === "buy" ? buyDisabledReason : sellDisabledReason;
+  const activeApprovalRequired = activeMode === "buy" ? buyApprovalRequired : sellApprovalRequired;
+  const activeQuote = activeMode === "buy" ? selectedBuyQuote : selectedSellQuote;
+  const actionButtonLabel = getActionButtonLabel({
+    activeMode,
+    approvalRequired: activeApprovalRequired,
+    disabledReason: activeDisabledReason,
+    feedback,
+    isConnected,
+    isPageLoading,
+    isWrongChain,
+    quoteState,
+    tradeData
+  });
+  const approvalSummary = getApprovalSummary({
+    activeMode,
+    approvalRequired: activeApprovalRequired,
+    feedback,
+    tokenSymbol
+  });
+
+  function handleResetTradeState() {
+    setFeedback(null);
+  }
+
+  function handleStartAnotherTrade() {
+    setFeedback(null);
+    if (activeMode === "buy") {
+      setBuyInput("");
+      setBuyQuoteState({ status: "idle" });
+    } else {
+      setSellInput("");
+      setSellQuoteState({ status: "idle" });
+    }
+  }
+
+  function handleSetMax() {
+    if (activeMode === "buy") {
+      setBuyInput(formatUnits(buyBalance, 6));
+      return;
+    }
+
+    setSellInput(formatUnits(sellBalance, tokenDecimals));
+  }
 
   return (
-    <Card className="space-y-6">
+    <aside className="surface-panel rounded-[var(--radius-xl)] p-5 sm:p-6">
       <div className="space-y-3">
-        <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70">Trade</p>
-        <h2 className="text-2xl font-semibold tracking-tight text-white">Buy or sell on Arc</h2>
-        <p className="text-sm leading-6 text-slate-300">
-          Arc Testnet only — test assets have no monetary value.
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="eyebrow">Trade</p>
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+              Buy or sell on Arc
+            </h2>
+          </div>
+          <TradeStatusPill
+            label={approvalSummary}
+            tone={
+              approvalSummary === "Approval confirmed"
+                ? "neutral"
+                : approvalSummary === "Approval required"
+                  ? "warning"
+                  : "success"
+            }
+          />
+        </div>
+        <p className="text-sm leading-6 text-[var(--text-muted)]">
+          Arc Testnet only - test assets have no monetary value.
         </p>
       </div>
 
-      <div className="flex rounded-full border border-white/10 bg-white/5 p-1">
+      <div className="surface-muted mt-6 rounded-full p-1" role="tablist" aria-label="Trade mode">
         <button
+          aria-selected={activeMode === "buy"}
           className={[
-            "flex-1 rounded-full px-4 py-2 text-sm font-semibold transition",
+            "min-h-11 flex-1 rounded-full px-4 py-2 text-sm font-semibold transition",
             activeMode === "buy"
-              ? "bg-cyan-300/15 text-cyan-100"
-              : "text-slate-400 hover:text-white"
+              ? "bg-[rgba(94,234,212,0.12)] text-white"
+              : "text-[var(--text-muted)] hover:text-white"
           ].join(" ")}
           onClick={() => setActiveMode("buy")}
+          role="tab"
           type="button"
         >
           Buy
         </button>
         <button
+          aria-selected={activeMode === "sell"}
           className={[
-            "flex-1 rounded-full px-4 py-2 text-sm font-semibold transition",
+            "min-h-11 flex-1 rounded-full px-4 py-2 text-sm font-semibold transition",
             activeMode === "sell"
-              ? "bg-cyan-300/15 text-cyan-100"
-              : "text-slate-400 hover:text-white"
+              ? "bg-[rgba(94,234,212,0.12)] text-white"
+              : "text-[var(--text-muted)] hover:text-white"
           ].join(" ")}
           onClick={() => setActiveMode("sell")}
+          role="tab"
           type="button"
         >
           Sell
@@ -1006,30 +1226,37 @@ export function TokenTradePanel({
       </div>
 
       {isPageLoading && !tradeData ? (
-        <div className="rounded-3xl border border-white/10 bg-white/4 p-5 text-sm text-slate-300">
-          Loading pool trading controls...
+        <div className="mt-6 animate-pulse space-y-4">
+          <div className="h-20 rounded-[var(--radius-md)] bg-white/6" />
+          <div className="h-28 rounded-[var(--radius-md)] bg-white/6" />
+          <div className="h-44 rounded-[var(--radius-md)] bg-white/6" />
         </div>
       ) : null}
 
       {tradeData ? (
-        <div className="space-y-5">
-          <div className="rounded-3xl border border-white/10 bg-white/4 p-5">
+        <div className="mt-6 space-y-5">
+          <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
             <div className="flex items-center justify-between gap-4">
               <label
                 className="text-sm font-semibold text-white"
                 htmlFor={activeMode === "buy" ? "buy-usdc-input" : "sell-token-input"}
               >
-                {activeMode === "buy" ? "USDC amount" : `${tokenSymbol} amount`}
+                {activeMode === "buy" ? "USDC input" : `${tokenSymbol} input`}
               </label>
-              <span className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                {activeMode === "buy" ? "6 decimals" : `${tokenDecimals} decimals`}
-              </span>
+              <button
+                className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-secondary)] transition hover:border-cyan-300/30 hover:text-white"
+                disabled={activeMode === "buy" ? buyBalance === 0n : sellBalance === 0n}
+                onClick={handleSetMax}
+                type="button"
+              >
+                Max
+              </button>
             </div>
 
-            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="flex-1">
+            <div className="mt-4">
+              <div className="field-shell min-h-[4.25rem] justify-between gap-3 rounded-[var(--radius-lg)] px-4">
                 <input
-                  className="min-h-12 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                  className="min-w-0 flex-1 bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-[var(--text-faint)]"
                   disabled={Boolean(feedback && !TERMINAL_PHASES.has(feedback.phase))}
                   id={activeMode === "buy" ? "buy-usdc-input" : "sell-token-input"}
                   inputMode="decimal"
@@ -1038,192 +1265,219 @@ export function TokenTradePanel({
                       ? setBuyInput(event.target.value)
                       : setSellInput(event.target.value)
                   }
-                  placeholder={activeMode === "buy" ? "0.00" : "0.00"}
+                  placeholder="0.00"
                   value={activeMode === "buy" ? buyInput : sellInput}
                 />
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-right text-sm text-slate-300">
-                <p>{activeMode === "buy" ? "Wallet USDC" : `Wallet ${tokenSymbol}`}</p>
-                <p className="mt-1 font-semibold text-white">
-                  {activeMode === "buy"
-                    ? `${formatUsdcAmount(buyBalance)} USDC`
-                    : formatTokenAmount(sellBalance, tokenDecimals)}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                  {activeMode === "buy" ? "Allowance to pool" : `${tokenSymbol} allowance`}
-                </p>
-                <p className="mt-2 text-sm font-semibold text-white">
-                  {activeMode === "buy"
-                    ? formatAllowance(usdcAllowance, 6, "USDC")
-                    : formatAllowance(tokenAllowance, tokenDecimals, tokenSymbol)}
-                </p>
-                <p className="mt-2 text-xs leading-5 text-slate-400">
-                  Spender: {poolAddress ? formatCompactAddress(poolAddress) : "Unavailable"}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                  Slippage tolerance
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {SLIPPAGE_PRESET_BPS.map((preset) => (
-                    <button
-                      className={[
-                        "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
-                        slippageMode === "preset" && presetSlippageBps === preset
-                          ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100"
-                          : "border-white/10 text-slate-300 hover:border-cyan-300/25 hover:text-white"
-                      ].join(" ")}
-                      key={preset}
-                      onClick={() => {
-                        setSlippageMode("preset");
-                        setPresetSlippageBps(preset);
-                        setCustomSlippageInput((preset / 100).toFixed(2));
-                      }}
-                      type="button"
-                    >
-                      {formatSlippageBps(preset)}
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-3">
-                  <label
-                    className="text-xs uppercase tracking-[0.24em] text-slate-500"
-                    htmlFor="custom-slippage-input"
-                  >
-                    Custom slippage
-                  </label>
-                  <div className="mt-2 flex items-center gap-3">
-                    <input
-                      className="min-h-11 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-2 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
-                      id="custom-slippage-input"
-                      inputMode="decimal"
-                      max="5"
-                      min="0.1"
-                      onChange={(event) => {
-                        setSlippageMode("custom");
-                        setCustomSlippageInput(event.target.value);
-                      }}
-                      placeholder="1.00"
-                      value={customSlippageInput}
-                    />
-                    <span className="text-sm text-slate-400">%</span>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-slate-400">
-                    Selected:{" "}
-                    {effectiveSlippageBps !== null
-                      ? formatSlippageBps(effectiveSlippageBps)
-                      : "Invalid"}
-                    . Allowed range: 0.10% to 5.00%.
+                <div className="text-right">
+                  <p className="text-sm font-medium text-white">
+                    {activeMode === "buy" ? "USDC" : tokenSymbol}
+                  </p>
+                  <p className="mt-1 text-xs uppercase tracking-[0.22em] text-[var(--text-faint)]">
+                    {activeMode === "buy" ? "6 decimals" : `${tokenDecimals} decimals`}
                   </p>
                 </div>
               </div>
             </div>
 
-            {activeMode === "buy" && selectedBuyQuote ? (
-              <dl className="mt-4 space-y-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
-                <DetailRow
-                  label="Expected token output"
-                  value={formatTokenAmount(
-                    BigInt(selectedBuyQuote.quote.tokenAmountOut),
-                    tokenDecimals
-                  )}
-                />
-                <DetailRow
-                  label="Buy fee"
-                  value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.fee))} USDC`}
-                />
-                <DetailRow
-                  label="Net USDC input"
-                  value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.netUsdcIn))} USDC`}
-                />
-                <DetailRow
-                  label="Minimum received"
-                  value={
-                    buyMinimumReceived !== null
-                      ? formatTokenAmount(buyMinimumReceived, tokenDecimals)
-                      : "Unavailable"
-                  }
-                />
-                <DetailRow
-                  label="Next real USDC reserve"
-                  value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.nextState.realUsdcReserve))} USDC`}
-                />
-                <DetailRow
-                  label="Next real token reserve"
-                  value={formatTokenAmount(
-                    BigInt(selectedBuyQuote.quote.nextState.realTokenReserve),
-                    tokenDecimals
-                  )}
-                />
-                {selectedBuyQuote.reachesGraduationThreshold ? (
-                  <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
-                    This buy reaches the graduation threshold exactly. Trading will move to
-                    Graduation Pending after the transaction succeeds.
-                  </div>
-                ) : null}
-              </dl>
-            ) : null}
-
-            {activeMode === "sell" && selectedSellQuote ? (
-              <dl className="mt-4 space-y-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
-                <DetailRow
-                  label="Expected net USDC output"
-                  value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.netUsdcAmountOut))} USDC`}
-                />
-                <DetailRow
-                  label="Gross USDC output"
-                  value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.grossUsdcAmountOut))} USDC`}
-                />
-                <DetailRow
-                  label="Sell fee"
-                  value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.fee))} USDC`}
-                />
-                <DetailRow
-                  label="Minimum received"
-                  value={
-                    sellMinimumReceived !== null
-                      ? `${formatUsdcAmount(sellMinimumReceived)} USDC`
-                      : "Unavailable"
-                  }
-                />
-                <DetailRow
-                  label="Next real USDC reserve"
-                  value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.nextState.realUsdcReserve))} USDC`}
-                />
-                <DetailRow
-                  label="Next real token reserve"
-                  value={formatTokenAmount(
-                    BigInt(selectedSellQuote.quote.nextState.realTokenReserve),
-                    tokenDecimals
-                  )}
-                />
-              </dl>
-            ) : null}
-
-            {quoteState.status === "error" ? (
-              <div className="mt-4 rounded-2xl border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm leading-6 text-rose-100">
-                {quoteState.error.message}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-[var(--radius-md)] border border-white/10 bg-[rgba(4,8,20,0.65)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+                  {activeMode === "buy" ? "Wallet USDC balance" : `Wallet ${tokenSymbol} balance`}
+                </p>
+                <p className="mt-2 text-base font-semibold text-white tabular-nums">
+                  {activeMode === "buy"
+                    ? `${formatUsdcAmount(buyBalance)} USDC`
+                    : formatTokenAmount(sellBalance, tokenDecimals)}
+                </p>
               </div>
-            ) : null}
+              <div className="rounded-[var(--radius-md)] border border-white/10 bg-[rgba(4,8,20,0.65)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+                  {activeMode === "buy" ? "Allowance to pool" : `${tokenSymbol} allowance`}
+                </p>
+                <p className="mt-2 text-base font-semibold text-white tabular-nums">
+                  {activeMode === "buy"
+                    ? formatAllowance(usdcAllowance, 6, "USDC")
+                    : formatAllowance(tokenAllowance, tokenDecimals, tokenSymbol)}
+                </p>
+                <p
+                  className="mt-2 truncate text-xs leading-5 text-[var(--text-faint)]"
+                  title={poolAddress}
+                >
+                  Spender: {poolAddress ? formatCompactAddress(poolAddress) : "Unavailable"}
+                </p>
+              </div>
+            </div>
           </div>
 
+          <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white">Slippage</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">
+                  Allowed range: 0.10% to 5.00%.
+                </p>
+              </div>
+              <p className="text-sm font-semibold tabular-nums text-white">
+                {effectiveSlippageBps !== null
+                  ? formatSlippageBps(effectiveSlippageBps)
+                  : "Invalid"}
+              </p>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {SLIPPAGE_PRESET_BPS.map((preset) => (
+                <button
+                  className={[
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                    slippageMode === "preset" && presetSlippageBps === preset
+                      ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100"
+                      : "border-white/10 text-[var(--text-secondary)] hover:border-cyan-300/25 hover:text-white"
+                  ].join(" ")}
+                  key={preset}
+                  onClick={() => {
+                    setSlippageMode("preset");
+                    setPresetSlippageBps(preset);
+                    setCustomSlippageInput((preset / 100).toFixed(2));
+                  }}
+                  type="button"
+                >
+                  {formatSlippageBps(preset)}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4">
+              <label
+                className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]"
+                htmlFor="custom-slippage-input"
+              >
+                Custom slippage
+              </label>
+              <div className="mt-2 flex items-center gap-3">
+                <input
+                  className="field-shell min-h-11 flex-1 text-sm"
+                  id="custom-slippage-input"
+                  inputMode="decimal"
+                  max="5"
+                  min="0.1"
+                  onChange={(event) => {
+                    setSlippageMode("custom");
+                    setCustomSlippageInput(event.target.value);
+                  }}
+                  placeholder="1.00"
+                  value={customSlippageInput}
+                />
+                <span className="text-sm text-[var(--text-muted)]">%</span>
+              </div>
+            </div>
+          </div>
+
+          {activeQuote ? (
+            <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-white">Quote breakdown</p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">
+                    {activeMode === "buy"
+                      ? "Server-side quote and simulation from the active pool."
+                      : "Exact sell quote using current LaunchPool state."}
+                  </p>
+                </div>
+                <TradeStatusPill
+                  label={quoteState.status === "loading" ? "Getting quote" : "Quote ready"}
+                  tone={quoteState.status === "loading" ? "warning" : "success"}
+                />
+              </div>
+
+              {activeMode === "buy" && selectedBuyQuote ? (
+                <dl className="mt-5 space-y-3">
+                  <DetailRow
+                    label="Expected token output"
+                    value={formatTokenAmount(
+                      BigInt(selectedBuyQuote.quote.tokenAmountOut),
+                      tokenDecimals
+                    )}
+                  />
+                  <DetailRow
+                    label="Buy fee"
+                    value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.fee))} USDC`}
+                  />
+                  <DetailRow
+                    label="Minimum received"
+                    value={
+                      buyMinimumReceived !== null
+                        ? formatTokenAmount(buyMinimumReceived, tokenDecimals)
+                        : "Unavailable"
+                    }
+                  />
+                  <DetailRow
+                    label="Net USDC input"
+                    value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.netUsdcIn))} USDC`}
+                  />
+                  <DetailRow
+                    label="Next reserve"
+                    value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.nextState.realUsdcReserve))} USDC`}
+                  />
+                  {selectedBuyQuote.reachesGraduationThreshold ? (
+                    <div className="rounded-[var(--radius-md)] border border-amber-300/18 bg-amber-300/8 px-4 py-3 text-sm leading-6 text-amber-100">
+                      This buy reaches the graduation threshold exactly. The pool will move to
+                      Graduation Pending after a successful trade.
+                    </div>
+                  ) : null}
+                </dl>
+              ) : null}
+
+              {activeMode === "sell" && selectedSellQuote ? (
+                <dl className="mt-5 space-y-3">
+                  <DetailRow
+                    label="Expected net USDC output"
+                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.netUsdcAmountOut))} USDC`}
+                  />
+                  <DetailRow
+                    label="Gross USDC output"
+                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.grossUsdcAmountOut))} USDC`}
+                  />
+                  <DetailRow
+                    label="Sell fee"
+                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.fee))} USDC`}
+                  />
+                  <DetailRow
+                    label="Minimum received"
+                    value={
+                      sellMinimumReceived !== null
+                        ? `${formatUsdcAmount(sellMinimumReceived)} USDC`
+                        : "Unavailable"
+                    }
+                  />
+                  <DetailRow
+                    label="Next reserve"
+                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.nextState.realUsdcReserve))} USDC`}
+                  />
+                </dl>
+              ) : null}
+            </div>
+          ) : null}
+
+          {quoteState.status === "error" ? (
+            <div className="rounded-[var(--radius-md)] border border-rose-300/18 bg-rose-300/8 px-4 py-3 text-sm leading-6 text-rose-100">
+              {quoteState.error.message}
+            </div>
+          ) : null}
+
           {!isConnected ? (
-            <div className="rounded-3xl border border-white/10 bg-white/4 p-5">
-              <p className="text-sm leading-6 text-slate-300">
-                Connect your browser wallet to quote, approve, and trade directly on Arc Testnet.
+            <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
+              <p className="text-sm leading-6 text-[var(--text-secondary)]">
+                Connect your browser wallet to quote, approve exact amounts, and trade directly on
+                Arc Testnet.
               </p>
               <div className="mt-4 w-fit">
                 <WalletConnectButton />
               </div>
             </div>
-          ) : isWrongChain ? (
-            <div className="rounded-3xl border border-amber-300/20 bg-amber-300/10 p-5">
+          ) : null}
+
+          {isConnected && isWrongChain ? (
+            <div className="rounded-[var(--radius-lg)] border border-amber-300/18 bg-amber-300/8 p-4 sm:p-5">
               <p className="text-sm leading-6 text-amber-50">
                 Your wallet is connected to {connection.chain?.name ?? "the wrong network"}. Switch
                 to Arc Testnet to trade this pool.
@@ -1241,7 +1495,6 @@ export function TokenTradePanel({
                     });
                   }}
                   size="sm"
-                  variant="primary"
                 >
                   {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
                 </Button>
@@ -1249,53 +1502,42 @@ export function TokenTradePanel({
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Button
-              disabled={
-                Boolean(buyDisabledReason) ||
-                isSwitchPending ||
-                isWritePending ||
-                activeMode !== "buy"
-              }
-              fullWidth
-              onClick={() => {
-                void handleExecuteBuy();
-              }}
-              variant="primary"
-            >
-              {feedback?.mode === "buy" && !TERMINAL_PHASES.has(feedback.phase)
-                ? "Buy in progress..."
-                : "Buy tokens"}
-            </Button>
-            <Button
-              disabled={
-                Boolean(sellDisabledReason) ||
-                isSwitchPending ||
-                isWritePending ||
-                activeMode !== "sell"
-              }
-              fullWidth
-              onClick={() => {
-                void handleExecuteSell();
-              }}
-              variant="secondary"
-            >
-              {feedback?.mode === "sell" && !TERMINAL_PHASES.has(feedback.phase)
-                ? "Sell in progress..."
-                : "Sell tokens"}
-            </Button>
-          </div>
+          {tradeData ? (
+            <div className="space-y-3">
+              <Button
+                className="w-full justify-center"
+                disabled={
+                  isConnected && !isWrongChain
+                    ? Boolean(activeDisabledReason) || isSwitchPending || isWritePending
+                    : true
+                }
+                fullWidth
+                onClick={() => {
+                  if (activeMode === "buy") {
+                    void handleExecuteBuy();
+                    return;
+                  }
 
-          {activeMode === "buy" && buyDisabledReason ? (
-            <p className="text-sm leading-6 text-slate-400">{buyDisabledReason}</p>
-          ) : null}
-          {activeMode === "sell" && sellDisabledReason ? (
-            <p className="text-sm leading-6 text-slate-400">{sellDisabledReason}</p>
+                  void handleExecuteSell();
+                }}
+              >
+                <span className="inline-flex min-h-5 items-center justify-center">
+                  {actionButtonLabel}
+                </span>
+              </Button>
+              {activeDisabledReason ? (
+                <p className="text-sm leading-6 text-[var(--text-muted)]">{activeDisabledReason}</p>
+              ) : null}
+            </div>
           ) : null}
 
-          <FeedbackCard feedback={feedback} />
+          <FeedbackCard
+            feedback={feedback}
+            onDismiss={handleResetTradeState}
+            onStartAnotherTrade={handleStartAnotherTrade}
+          />
         </div>
       ) : null}
-    </Card>
+    </aside>
   );
 }
