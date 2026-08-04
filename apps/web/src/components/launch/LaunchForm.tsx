@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { BaseError, useConnection, useReadContract, useSwitchChain, useWriteContract } from "wagmi";
 import { getAddress } from "viem";
 
@@ -49,6 +49,8 @@ import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { WalletConnectButton } from "../wallet/WalletConnectButton";
 import { LaunchField } from "./LaunchField";
+import { LaunchImageUpload } from "./LaunchImageUpload";
+import { LaunchSection } from "./LaunchSection";
 import { LaunchSummary } from "./LaunchSummary";
 import {
   INITIAL_CUSTOM_SLIPPAGE_INPUT,
@@ -380,6 +382,9 @@ export function LaunchForm() {
   const nameId = useId();
   const symbolId = useId();
   const descriptionId = useId();
+  const artworkInputId = useId();
+  const xProfileId = useId();
+  const telegramId = useId();
   const initialPurchaseId = useId();
   const customSlippageId = useId();
 
@@ -400,6 +405,12 @@ export function LaunchForm() {
   const [slippageMode, setSlippageMode] = useState<"preset" | "custom">("preset");
   const [presetSlippageBps, setPresetSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS);
   const [customSlippageInput, setCustomSlippageInput] = useState(INITIAL_CUSTOM_SLIPPAGE_INPUT);
+  const [artworkPreviewUrl, setArtworkPreviewUrl] = useState<string | null>(null);
+  const [artworkFileName, setArtworkFileName] = useState("");
+  const [artworkError, setArtworkError] = useState<string | null>(null);
+  const [xProfile, setXProfile] = useState("");
+  const [telegram, setTelegram] = useState("");
+  const artworkObjectUrlRef = useRef<string | null>(null);
 
   const connection = useConnection();
   const { mutateAsync: switchChainAsync, isPending: isSwitchPending } = useSwitchChain();
@@ -483,6 +494,7 @@ export function LaunchForm() {
   });
   const submitDisabledReason =
     baseSubmitDisabledReason ??
+    (!artworkPreviewUrl ? "Upload token artwork before launching." : null) ??
     (values.initialPurchaseEnabled && effectiveSlippageBps === null
       ? "Enter a valid slippage value."
       : values.initialPurchaseEnabled &&
@@ -509,6 +521,14 @@ export function LaunchForm() {
 
   useEffect(() => {
     void refreshLaunchConfig();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (artworkObjectUrlRef.current) {
+        URL.revokeObjectURL(artworkObjectUrlRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -694,8 +714,37 @@ export function LaunchForm() {
     }));
   }
 
+  function handleArtworkSelection(fileList: FileList | null) {
+    const file = fileList?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setArtworkError("Upload a PNG, JPG, or WEBP image.");
+      return;
+    }
+
+    if (artworkObjectUrlRef.current) {
+      URL.revokeObjectURL(artworkObjectUrlRef.current);
+    }
+
+    const nextObjectUrl = URL.createObjectURL(file);
+
+    artworkObjectUrlRef.current = nextObjectUrl;
+    setArtworkPreviewUrl(nextObjectUrl);
+    setArtworkFileName(file.name);
+    setArtworkError(null);
+  }
+
   function handleCreateAnotherToken() {
     const reset = createLaunchComposerResetState();
+
+    if (artworkObjectUrlRef.current) {
+      URL.revokeObjectURL(artworkObjectUrlRef.current);
+      artworkObjectUrlRef.current = null;
+    }
 
     setValues(reset.values);
     setTouchedFields(reset.touchedFields);
@@ -707,6 +756,11 @@ export function LaunchForm() {
     setPresetSlippageBps(reset.presetSlippageBps);
     setCustomSlippageInput(reset.customSlippageInput);
     setInitialBuyQuoteState({ status: "idle" });
+    setArtworkPreviewUrl(null);
+    setArtworkFileName("");
+    setArtworkError(null);
+    setXProfile("");
+    setTelegram("");
   }
 
   async function handleSwitchNetwork() {
@@ -1254,195 +1308,247 @@ export function LaunchForm() {
   });
 
   return (
-    <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_23rem] xl:items-start">
-      <form className="space-y-6" noValidate onSubmit={handleSubmit}>
-        <Card className="space-y-8">
-          <div className="space-y-3">
-            <Link
-              className="inline-flex items-center gap-2 rounded-full text-sm font-semibold text-cyan-200 transition hover:text-cyan-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
-              href="/"
+    <form className="space-y-5" noValidate onSubmit={handleSubmit}>
+      <div className="space-y-3">
+        <Link
+          className="inline-flex items-center gap-2 rounded-full text-sm font-semibold text-cyan-200 transition hover:text-cyan-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+          href="/"
+        >
+          <span aria-hidden="true">&larr;</span>
+          Back to home
+        </Link>
+        <div className="space-y-2">
+          <h1 className="text-[2rem] font-semibold tracking-tight text-white sm:text-[2.5rem]">
+            Launch token
+          </h1>
+          <p className="max-w-2xl text-sm leading-7 text-slate-300">
+            Create and launch your token on LibrARC with a simple, creator-first flow.
+          </p>
+        </div>
+      </div>
+
+      <Card className="overflow-hidden border-[rgba(82,95,117,0.48)] bg-[linear-gradient(180deg,rgba(76,128,255,0.04),rgba(20,25,34,0.99)_22%,rgba(18,23,32,0.99))] p-0">
+        <div className="grid gap-0 xl:grid-cols-[minmax(0,1.08fr)_23.5rem]">
+          <div className="space-y-5 p-5 sm:p-6 lg:p-7">
+            <LaunchSection
+              description="Fill out the essentials for your token launch. Keep it short, clean, and creator-friendly."
+              eyebrow="Launch"
+              id="launch-basics-heading"
+              title="Basic details"
             >
-              <span aria-hidden="true">&larr;</span>
-              Back to home
-            </Link>
-            <div>
-              <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                Launch a token
-              </h1>
-              <p className="mt-4 max-w-3xl text-base leading-8 text-slate-300">
-                Create a standard LibrARC token through the verified Arc Testnet LaunchFactory with
-                your connected browser wallet. Optional creator buying reuses the exact{" "}
-                <code className="rounded bg-white/6 px-2 py-1 text-sm text-cyan-100">
-                  createLaunchAndBuy
-                </code>{" "}
-                path when enabled.
-              </p>
-            </div>
-          </div>
-
-          <section aria-labelledby="token-details-heading" className="space-y-6">
-            <div>
-              <h2
-                className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70"
-                id="token-details-heading"
-              >
-                Token details
-              </h2>
-            </div>
-
-            <div className="grid gap-6 lg:grid-cols-2">
-              <LaunchField
-                className="h-full"
-                error={nameError}
-                errorId={`${nameId}-error`}
-                hint="Required. Validation trims whitespace and requires 2 to 32 characters."
-                hintClassName="min-h-12"
-                hintId={`${nameId}-hint`}
-                htmlFor={nameId}
-                label="Token name"
-                required
-              >
-                <input
-                  aria-describedby={[`${nameId}-hint`, nameError ? `${nameId}-error` : ""]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-invalid={Boolean(nameError)}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                  id={nameId}
-                  maxLength={64}
-                  onBlur={() => markFieldTouched("name")}
-                  onChange={(event) => handleStringChange("name", event.target.value)}
-                  placeholder="Arc Nova"
-                  type="text"
-                  value={values.name}
-                />
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
-                  {getDisplayValue(values.name).length} / 32
-                </p>
-              </LaunchField>
-
-              <LaunchField
-                className="h-full"
-                error={symbolError}
-                errorId={`${symbolId}-error`}
-                hint="Required. Enter 2 to 10 characters using A-Z and 0-9 only."
-                hintClassName="min-h-12"
-                hintId={`${symbolId}-hint`}
-                htmlFor={symbolId}
-                label="Token symbol"
-                required
-              >
-                <input
-                  aria-describedby={[`${symbolId}-hint`, symbolError ? `${symbolId}-error` : ""]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-invalid={Boolean(symbolError)}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                  id={symbolId}
-                  maxLength={10}
-                  onBlur={() => markFieldTouched("symbol")}
-                  onChange={(event) => handleStringChange("symbol", event.target.value)}
-                  placeholder="ARCN"
-                  spellCheck={false}
-                  type="text"
-                  value={values.symbol}
-                />
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
-                  {getDisplayValue(values.symbol).length} / 10
-                </p>
-              </LaunchField>
-            </div>
-
-            <LaunchField
-              error={descriptionError}
-              errorId={`${descriptionId}-error`}
-              hint="Optional. Empty descriptions are omitted from the metadata JSON."
-              hintId={`${descriptionId}-hint`}
-              htmlFor={descriptionId}
-              label="Description"
-              labelNote="(optional)"
-            >
-              <textarea
-                aria-describedby={[
-                  `${descriptionId}-hint`,
-                  descriptionError ? `${descriptionId}-error` : ""
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                aria-invalid={Boolean(descriptionError)}
-                className="min-h-40 w-full rounded-[1.5rem] border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                id={descriptionId}
-                maxLength={500}
-                onBlur={() => markFieldTouched("description")}
-                onChange={(event) => handleStringChange("description", event.target.value)}
-                placeholder="Describe the token in one concise paragraph, or leave this blank."
-                value={values.description}
-              />
-              <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
-                {getDisplayValue(values.description).length} / 500
-              </p>
-            </LaunchField>
-          </section>
-
-          <section aria-labelledby="initial-purchase-heading" className="space-y-6">
-            <div className="space-y-3">
-              <h2
-                className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70"
-                id="initial-purchase-heading"
-              >
-                Creator initial purchase
-              </h2>
-              <label className="flex items-center gap-3 rounded-[1.5rem] border border-white/10 bg-white/4 px-4 py-3 text-sm text-white">
-                <input
-                  checked={values.initialPurchaseEnabled}
-                  className="h-4 w-4 rounded border-white/20 bg-slate-950/80 text-cyan-300 focus:ring-cyan-300/40"
-                  onChange={(event) => {
-                    handleBooleanChange("initialPurchaseEnabled", event.target.checked);
-                    if (!event.target.checked) {
-                      handleStringChange("initialPurchaseAmount", "");
-                    }
-                  }}
-                  type="checkbox"
-                />
-                <span>Make an initial purchase</span>
-              </label>
-            </div>
-
-            {values.initialPurchaseEnabled ? (
-              <div className="space-y-5 rounded-[1.5rem] border border-white/10 bg-white/4 p-5">
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_12rem]">
                 <LaunchField
-                  error={initialPurchaseAmountError}
-                  errorId={`${initialPurchaseId}-error`}
-                  hint="Optional. Enter a 6-decimal Arc USDC amount. Leave this blank or use 0 to keep the standard createLaunch path."
-                  hintId={`${initialPurchaseId}-hint`}
-                  htmlFor={initialPurchaseId}
-                  label="Initial purchase amount"
-                  labelNote="(optional)"
+                  className="h-full"
+                  error={nameError}
+                  errorId={`${nameId}-error`}
+                  hint="Letters, numbers, and spaces. 32 characters max."
+                  hintClassName="min-h-10"
+                  hintId={`${nameId}-hint`}
+                  htmlFor={nameId}
+                  label="Name"
+                  required
                 >
                   <input
-                    aria-describedby={[
-                      `${initialPurchaseId}-hint`,
-                      initialPurchaseAmountError ? `${initialPurchaseId}-error` : ""
-                    ]
+                    aria-describedby={[`${nameId}-hint`, nameError ? `${nameId}-error` : ""]
                       .filter(Boolean)
                       .join(" ")}
-                    aria-invalid={Boolean(initialPurchaseAmountError)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/50"
-                    id={initialPurchaseId}
-                    inputMode="decimal"
-                    onBlur={() => markFieldTouched("initialPurchaseAmount")}
-                    onChange={(event) =>
-                      handleStringChange("initialPurchaseAmount", event.target.value)
-                    }
-                    placeholder="0.00"
+                    aria-invalid={Boolean(nameError)}
+                    className="w-full rounded-[1rem] border border-white/10 bg-slate-950/80 px-4 py-3.5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                    id={nameId}
+                    maxLength={64}
+                    onBlur={() => markFieldTouched("name")}
+                    onChange={(event) => handleStringChange("name", event.target.value)}
+                    placeholder="Token name"
                     type="text"
-                    value={values.initialPurchaseAmount}
+                    value={values.name}
                   />
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    {getDisplayValue(values.name).length} / 32
+                  </p>
                 </LaunchField>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-[1.25rem] border border-white/10 bg-slate-950/60 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                <LaunchField
+                  className="h-full"
+                  error={symbolError}
+                  errorId={`${symbolId}-error`}
+                  hint="Letters and numbers. 10 characters max."
+                  hintClassName="min-h-10"
+                  hintId={`${symbolId}-hint`}
+                  htmlFor={symbolId}
+                  label="Ticker"
+                  required
+                >
+                  <input
+                    aria-describedby={[`${symbolId}-hint`, symbolError ? `${symbolId}-error` : ""]
+                      .filter(Boolean)
+                      .join(" ")}
+                    aria-invalid={Boolean(symbolError)}
+                    className="w-full rounded-[1rem] border border-white/10 bg-slate-950/80 px-4 py-3.5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                    id={symbolId}
+                    maxLength={10}
+                    onBlur={() => markFieldTouched("symbol")}
+                    onChange={(event) => handleStringChange("symbol", event.target.value)}
+                    placeholder="symbol"
+                    spellCheck={false}
+                    type="text"
+                    value={values.symbol}
+                  />
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    {getDisplayValue(values.symbol).length} / 10
+                  </p>
+                </LaunchField>
+              </div>
+
+              <LaunchField
+                error={descriptionError}
+                errorId={`${descriptionId}-error`}
+                hint="No links. Keep it concise. Empty descriptions are omitted from launch metadata."
+                hintId={`${descriptionId}-hint`}
+                htmlFor={descriptionId}
+                label="Description"
+                labelNote="(optional)"
+              >
+                <textarea
+                  aria-describedby={[
+                    `${descriptionId}-hint`,
+                    descriptionError ? `${descriptionId}-error` : ""
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  aria-invalid={Boolean(descriptionError)}
+                  className="min-h-28 w-full rounded-[1rem] border border-white/10 bg-slate-950/80 px-4 py-3.5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                  id={descriptionId}
+                  maxLength={500}
+                  onBlur={() => markFieldTouched("description")}
+                  onChange={(event) => handleStringChange("description", event.target.value)}
+                  placeholder="A short description of the token"
+                  value={values.description}
+                />
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  {getDisplayValue(values.description).length} / 500
+                </p>
+              </LaunchField>
+            </LaunchSection>
+
+            <LaunchSection
+              description="Upload the token artwork that will represent your launch in the UI preview."
+              id="launch-artwork-heading"
+              title="Token artwork"
+            >
+              <LaunchImageUpload
+                error={artworkError}
+                fileName={artworkFileName || null}
+                helperText="Click to choose a file or drag one here. Artwork is required in this launch UI."
+                inputId={artworkInputId}
+                previewUrl={artworkPreviewUrl}
+                required
+                secondaryText="Confirm public upload first. The artwork preview is UI-only in this sprint and is not uploaded on-chain yet."
+                title="Token image"
+                onSelectFile={handleArtworkSelection}
+              />
+            </LaunchSection>
+
+            <LaunchSection
+              description="Optional social links help the preview card feel complete without adding clutter to the launch flow."
+              id="launch-socials-heading"
+              title="Socials"
+            >
+              <div className="grid gap-4 lg:grid-cols-2">
+                <LaunchField
+                  hint="Optional"
+                  hintId={`${xProfileId}-hint`}
+                  htmlFor={xProfileId}
+                  label="X profile"
+                >
+                  <input
+                    aria-describedby={`${xProfileId}-hint`}
+                    className="w-full rounded-[1rem] border border-white/10 bg-slate-950/80 px-4 py-3.5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                    id={xProfileId}
+                    onChange={(event) => setXProfile(event.target.value)}
+                    placeholder="x.com/handle"
+                    type="text"
+                    value={xProfile}
+                  />
+                </LaunchField>
+                <LaunchField
+                  hint="Optional"
+                  hintId={`${telegramId}-hint`}
+                  htmlFor={telegramId}
+                  label="Telegram"
+                >
+                  <input
+                    aria-describedby={`${telegramId}-hint`}
+                    className="w-full rounded-[1rem] border border-white/10 bg-slate-950/80 px-4 py-3.5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                    id={telegramId}
+                    onChange={(event) => setTelegram(event.target.value)}
+                    placeholder="t.me/community"
+                    type="text"
+                    value={telegram}
+                  />
+                </LaunchField>
+              </div>
+            </LaunchSection>
+
+            <LaunchSection
+              description="Optional creator-side buy that can reuse the verified createLaunchAndBuy path."
+              id="launch-dev-buy-heading"
+              title="Developer buy"
+            >
+              <div className="space-y-4 rounded-[1.15rem] border border-white/10 bg-[rgba(255,255,255,0.03)] p-4">
+                <label className="flex items-center gap-3 text-sm text-white">
+                  <input
+                    checked={values.initialPurchaseEnabled}
+                    className="h-4 w-4 rounded border-white/20 bg-slate-950/80 text-cyan-300 focus:ring-cyan-300/40"
+                    onChange={(event) => {
+                      handleBooleanChange("initialPurchaseEnabled", event.target.checked);
+                      if (!event.target.checked) {
+                        handleStringChange("initialPurchaseAmount", "");
+                      }
+                    }}
+                    type="checkbox"
+                  />
+                  <span>Enable developer buy</span>
+                </label>
+
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                  <LaunchField
+                    error={initialPurchaseAmountError}
+                    errorId={`${initialPurchaseId}-error`}
+                    hint="Optional. Maximum 1,000,000 USDC."
+                    hintId={`${initialPurchaseId}-hint`}
+                    htmlFor={initialPurchaseId}
+                    label="Amount"
+                    labelNote="(optional)"
+                  >
+                    <input
+                      aria-describedby={[
+                        `${initialPurchaseId}-hint`,
+                        initialPurchaseAmountError ? `${initialPurchaseId}-error` : ""
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      aria-invalid={Boolean(initialPurchaseAmountError)}
+                      className="w-full rounded-[1rem] border border-white/10 bg-slate-950/80 px-4 py-3.5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                      id={initialPurchaseId}
+                      inputMode="decimal"
+                      onBlur={() => markFieldTouched("initialPurchaseAmount")}
+                      onChange={(event) =>
+                        handleStringChange("initialPurchaseAmount", event.target.value)
+                      }
+                      placeholder="0.00"
+                      type="text"
+                      value={values.initialPurchaseAmount}
+                    />
+                  </LaunchField>
+
+                  <span className="inline-flex min-h-11 items-center rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 text-sm font-semibold text-cyan-100">
+                    Arc USDC
+                  </span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="rounded-[0.95rem] border border-white/8 bg-slate-950/60 px-3.5 py-3">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
                       Wallet USDC
                     </p>
                     <p className="mt-2 text-sm font-semibold text-white">
@@ -1453,9 +1559,9 @@ export function LaunchForm() {
                         : "Connect wallet"}
                     </p>
                   </div>
-                  <div className="rounded-[1.25rem] border border-white/10 bg-slate-950/60 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
-                      Allowance to Factory
+                  <div className="rounded-[0.95rem] border border-white/8 bg-slate-950/60 px-3.5 py-3">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Allowance
                     </p>
                     <p className="mt-2 text-sm font-semibold text-white">
                       {walletAddress
@@ -1464,18 +1570,59 @@ export function LaunchForm() {
                           : `${formatUsdcAmount(currentUsdcAllowance)} USDC`
                         : "Connect wallet"}
                     </p>
+                  </div>
+                  <div className="rounded-[0.95rem] border border-white/8 bg-slate-950/60 px-3.5 py-3">
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Spender
+                    </p>
                     <p
-                      className="mt-2 truncate text-xs leading-5 text-slate-400"
+                      className="mt-2 truncate text-sm font-semibold text-white"
                       title={arcDeployment.factoryAddress}
                     >
-                      Spender: {formatCompactAddress(arcDeployment.factoryAddress)}
+                      {formatCompactAddress(arcDeployment.factoryAddress)}
                     </p>
                   </div>
                 </div>
 
-                <div className="rounded-[1.25rem] border border-white/10 bg-slate-950/60 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
-                    Slippage tolerance
+                {selectedInitialBuyQuote ? (
+                  <dl className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-[0.95rem] border border-white/8 bg-slate-950/60 px-3.5 py-3">
+                      <dt className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Expected output
+                      </dt>
+                      <dd className="mt-2 text-sm font-semibold text-white">
+                        {formatLaunchTokenAmount(
+                          BigInt(selectedInitialBuyQuote.quote.tokenAmountOut)
+                        )}
+                      </dd>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-white/8 bg-slate-950/60 px-3.5 py-3">
+                      <dt className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                        Net input
+                      </dt>
+                      <dd className="mt-2 text-sm font-semibold text-white">
+                        {formatUsdcAmount(BigInt(selectedInitialBuyQuote.quote.netUsdcIn))} USDC
+                      </dd>
+                    </div>
+                  </dl>
+                ) : null}
+
+                {initialBuyQuoteState.status === "error" ? (
+                  <div className="rounded-[0.95rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm leading-6 text-rose-100">
+                    {initialBuyQuoteState.error.message}
+                  </div>
+                ) : null}
+              </div>
+            </LaunchSection>
+
+            <details className="rounded-[1.15rem] border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-4">
+              <summary className="cursor-pointer text-sm font-semibold text-white">
+                Advanced
+              </summary>
+              <div className="mt-4 space-y-5">
+                <div className="rounded-[1rem] border border-white/8 bg-slate-950/60 p-4">
+                  <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Slippage
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {SLIPPAGE_PRESET_BPS.map((preset) => (
@@ -1498,160 +1645,155 @@ export function LaunchForm() {
                       </button>
                     ))}
                   </div>
-                  <div className="mt-3">
-                    <label
-                      className="text-xs uppercase tracking-[0.24em] text-slate-500"
-                      htmlFor={customSlippageId}
-                    >
-                      Custom slippage
-                    </label>
-                    <div className="mt-2 flex items-center gap-3">
-                      <input
-                        className="min-h-11 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-2 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
-                        id={customSlippageId}
-                        inputMode="decimal"
-                        max="5"
-                        min="0.1"
-                        onChange={(event) => {
-                          setSlippageMode("custom");
-                          setCustomSlippageInput(event.target.value);
-                        }}
-                        placeholder="1.00"
-                        value={customSlippageInput}
-                      />
-                      <span className="text-sm text-slate-400">%</span>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-400">
-                      Selected:{" "}
-                      {effectiveSlippageBps !== null
-                        ? formatSlippageBps(effectiveSlippageBps)
-                        : "Invalid"}
-                      . Allowed range: 0.10% to 5.00%.
-                    </p>
+                  <div className="mt-3 flex items-center gap-3">
+                    <input
+                      className="min-h-11 w-full rounded-[1rem] border border-white/10 bg-slate-950/80 px-4 py-2 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45"
+                      id={customSlippageId}
+                      inputMode="decimal"
+                      max="5"
+                      min="0.1"
+                      onChange={(event) => {
+                        setSlippageMode("custom");
+                        setCustomSlippageInput(event.target.value);
+                      }}
+                      placeholder="1.00"
+                      value={customSlippageInput}
+                    />
+                    <span className="text-sm text-slate-400">%</span>
                   </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    Selected:{" "}
+                    {effectiveSlippageBps !== null
+                      ? formatSlippageBps(effectiveSlippageBps)
+                      : "Invalid"}
+                    . Allowed range: 0.10% to 5.00%.
+                  </p>
                 </div>
 
-                {selectedInitialBuyQuote ? (
-                  <dl className="space-y-3 rounded-[1.25rem] border border-white/10 bg-slate-950/60 p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <dt className="text-sm text-slate-400">Expected token output</dt>
-                      <dd className="text-right text-sm font-medium text-white">
-                        {formatLaunchTokenAmount(
-                          BigInt(selectedInitialBuyQuote.quote.tokenAmountOut)
-                        )}
-                      </dd>
-                    </div>
-                    <div className="flex items-start justify-between gap-4">
-                      <dt className="text-sm text-slate-400">Fee</dt>
-                      <dd className="text-right text-sm font-medium text-white">
-                        {formatUsdcAmount(BigInt(selectedInitialBuyQuote.quote.fee))} USDC
-                      </dd>
-                    </div>
-                    <div className="flex items-start justify-between gap-4">
-                      <dt className="text-sm text-slate-400">Net USDC input</dt>
-                      <dd className="text-right text-sm font-medium text-white">
-                        {formatUsdcAmount(BigInt(selectedInitialBuyQuote.quote.netUsdcIn))} USDC
-                      </dd>
-                    </div>
-                    <div className="flex items-start justify-between gap-4">
-                      <dt className="text-sm text-slate-400">Minimum tokens received</dt>
-                      <dd className="text-right text-sm font-medium text-white">
-                        {minimumInitialTokenOutput !== null
-                          ? formatLaunchTokenAmount(minimumInitialTokenOutput)
-                          : "Unavailable"}
-                      </dd>
-                    </div>
-                    {selectedInitialBuyQuote.reachesGraduationThreshold ? (
-                      <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm leading-6 text-amber-100">
-                        This creator buy reaches the graduation threshold exactly. The pool moves to
-                        Graduation Pending after the transaction succeeds.
-                      </div>
-                    ) : null}
-                  </dl>
-                ) : null}
-
-                {initialBuyQuoteState.status === "error" ? (
-                  <div className="rounded-2xl border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm leading-6 text-rose-100">
-                    {initialBuyQuoteState.error.message}
+                <div className="rounded-[1rem] border border-white/8 bg-slate-950/60 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-white">Deterministic metadata URI</p>
+                    <p
+                      className={[
+                        "text-xs font-semibold uppercase tracking-[0.24em]",
+                        metadataError ? "text-rose-200" : "text-cyan-100/70"
+                      ].join(" ")}
+                    >
+                      {maxMetadataUriLength === null
+                        ? `${metadataPreview.uriByteLength} bytes`
+                        : `${metadataPreview.uriByteLength} / ${maxMetadataUriLength} bytes`}
+                    </p>
                   </div>
-                ) : null}
+                  <pre className="mt-3 overflow-x-auto rounded-[0.95rem] border border-white/8 bg-[rgba(10,14,22,0.82)] p-4 text-xs leading-6 text-slate-200">
+                    <code>{metadataPreview.json}</code>
+                  </pre>
+                  <p className="mt-3 text-sm leading-6 text-slate-400">
+                    The metadata is encoded as a compact <code>data:application/json</code> URI and
+                    submitted directly to the LaunchFactory.
+                  </p>
+                  {metadataError ? (
+                    <p className="mt-3 text-sm leading-6 text-rose-200" id="metadata-error">
+                      {metadataError}
+                    </p>
+                  ) : null}
+                </div>
               </div>
-            ) : null}
-          </section>
+            </details>
 
-          <section aria-labelledby="metadata-heading" className="space-y-6">
-            <div>
-              <h2
-                className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70"
-                id="metadata-heading"
-              >
-                Metadata preview
-              </h2>
-            </div>
-
-            <div className="space-y-4 rounded-[1.5rem] border border-white/10 bg-white/4 p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-white">Deterministic metadata URI</p>
-                <p
-                  className={[
-                    "text-xs font-semibold uppercase tracking-[0.24em]",
-                    metadataError ? "text-rose-200" : "text-cyan-100/70"
-                  ].join(" ")}
-                >
-                  {maxMetadataUriLength === null
-                    ? `${metadataPreview.uriByteLength} bytes`
-                    : `${metadataPreview.uriByteLength} / ${maxMetadataUriLength} bytes`}
-                </p>
-              </div>
-              <pre className="overflow-x-auto rounded-[1.25rem] border border-white/10 bg-slate-950/80 p-4 text-sm leading-6 text-slate-200">
-                <code>{metadataPreview.json}</code>
-              </pre>
-              <p className="text-sm leading-6 text-slate-400">
-                The metadata is encoded as a compact <code>data:application/json</code> URI and
-                submitted directly to the LaunchFactory. Description is omitted when left empty.
-              </p>
-              {metadataError ? (
-                <p className="text-sm leading-6 text-rose-200" id="metadata-error">
-                  {metadataError}
-                </p>
-              ) : null}
-            </div>
-          </section>
-
-          <section
-            aria-labelledby="launch-action-heading"
-            className="space-y-4 border-t border-white/10 pt-8"
-          >
-            <div>
-              <h2
-                className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-100/70"
-                id="launch-action-heading"
-              >
-                Final action
-              </h2>
-              <p className="mt-3 text-sm leading-7 text-slate-400">
-                The server only reads LaunchFactory configuration, simulates the exact transaction,
-                and quotes the optional creator buy using verified protocol math. The connected
-                browser wallet is the only signer.
-              </p>
-            </div>
-
-            <Card className="space-y-4 rounded-[1.5rem] border-white/10 bg-white/4">
-              <div className="rounded-[1.25rem] border border-white/10 bg-slate-950/70 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-sm text-slate-400">Launch state</p>
+            <LaunchSection
+              description="Review the verified launch state and submit from your connected browser wallet."
+              id="launch-action-heading"
+              title="Final action"
+            >
+              <div className="space-y-4 rounded-[1.15rem] border border-white/10 bg-[rgba(255,255,255,0.03)] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1rem] border border-white/8 bg-slate-950/65 px-4 py-3">
+                  <div>
+                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Launch state
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-white">
+                      {!isConnected
+                        ? "Wallet not connected"
+                        : isWrongNetwork
+                          ? `Connected to ${connection.chain?.name ?? "the wrong network"}`
+                          : `Connected as ${walletAddress ? formatCompactAddress(walletAddress) : "unknown"}`}
+                    </p>
+                  </div>
                   <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-100">
                     {livePhase}
                   </span>
                 </div>
-                <p className="mt-2 text-base font-semibold text-white">
-                  {!isConnected
-                    ? "Wallet not connected"
-                    : isWrongNetwork
-                      ? `Connected to ${connection.chain?.name ?? "the wrong network"}`
-                      : `Connected as ${walletAddress ? formatCompactAddress(walletAddress) : "unknown"}`}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-slate-400">
+
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1rem] border border-white/8 bg-slate-950/45 px-4 py-3 text-sm text-slate-300">
+                  <span>Launch fee: Configuration pending</span>
+                  <span>Network: {arcTestnet.name}</span>
+                </div>
+
+                <p className="text-sm leading-6 text-amber-100">{ARC_TESTNET_NOTICE}</p>
+
+                {!isConnected ? (
+                  <div className="flex justify-start">
+                    <WalletConnectButton />
+                  </div>
+                ) : isWrongNetwork ? (
+                  <Button
+                    className="w-full sm:w-auto"
+                    disabled={isSwitchPending}
+                    onClick={() => {
+                      void handleSwitchNetwork();
+                    }}
+                    type="button"
+                  >
+                    {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
+                  </Button>
+                ) : (
+                  <Button
+                    className="w-full border-0 bg-[linear-gradient(135deg,#8dff8e,#b8ff7e)] text-slate-950 hover:bg-[linear-gradient(135deg,#9dff9d,#c7ff8e)]"
+                    disabled={Boolean(submitDisabledReason)}
+                    size="lg"
+                    type="submit"
+                  >
+                    {isSubmitting
+                      ? "Launch in progress..."
+                      : isInitialPurchaseRequested
+                        ? "Launch token"
+                        : "Launch token"}
+                  </Button>
+                )}
+
+                {hasConfirmedOutcome ? (
+                  <div className="flex flex-wrap gap-3">
+                    <Button onClick={handleCreateAnotherToken} type="button" variant="ghost">
+                      Create another token
+                    </Button>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    disabled={configState.isLoading}
+                    onClick={() => {
+                      void refreshLaunchConfig();
+                    }}
+                    type="button"
+                    variant="secondary"
+                  >
+                    {configState.isLoading ? "Refreshing..." : "Refresh config"}
+                  </Button>
+                  <Link
+                    className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 px-4 text-sm font-semibold text-slate-100 transition hover:border-cyan-300/40 hover:bg-white/8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
+                    href={buildArcScanAddressUrl(
+                      arcDeployment.explorerUrl,
+                      arcDeployment.factoryAddress
+                    )}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    View Factory
+                  </Link>
+                </div>
+
+                <p className="text-sm leading-6 text-slate-400">
                   {configState.isLoading
                     ? "Loading the verified Arc Testnet LaunchFactory configuration."
                     : configState.data?.factory.paused
@@ -1661,95 +1803,40 @@ export function LaunchForm() {
                           purchaseModeLabel(isInitialPurchaseRequested)
                         )}
                 </p>
+
+                {submitDisabledReason ? (
+                  <p className="text-sm leading-6 text-slate-400">{submitDisabledReason}</p>
+                ) : null}
               </div>
+            </LaunchSection>
+          </div>
 
-              <p className="text-sm leading-6 text-amber-100">{ARC_TESTNET_NOTICE}</p>
+          <aside className="border-t border-white/8 bg-[rgba(11,15,23,0.46)] p-5 sm:p-6 xl:sticky xl:top-24 xl:border-l xl:border-t-0 xl:self-start">
+            <LaunchSummary
+              connectedWalletAddress={walletAddress}
+              imagePreviewUrl={artworkPreviewUrl}
+              initialPurchaseAmount={
+                isInitialPurchaseRequested ? values.initialPurchaseAmount : null
+              }
+              minimumTokenAmountOut={minimumInitialTokenOutput?.toString(10) ?? null}
+              paused={configState.data?.factory.paused ?? false}
+              purchaseMode={isInitialPurchaseRequested ? "createLaunchAndBuy" : "createLaunch"}
+              telegram={telegram}
+              values={values}
+              xProfile={xProfile}
+            />
+          </aside>
+        </div>
+      </Card>
 
-              {!isConnected ? (
-                <div className="flex justify-start">
-                  <WalletConnectButton />
-                </div>
-              ) : isWrongNetwork ? (
-                <Button
-                  disabled={isSwitchPending}
-                  onClick={() => {
-                    void handleSwitchNetwork();
-                  }}
-                  type="button"
-                >
-                  {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
-                </Button>
-              ) : (
-                <Button disabled={Boolean(submitDisabledReason)} type="submit">
-                  {isSubmitting
-                    ? "Launch in progress..."
-                    : isInitialPurchaseRequested
-                      ? "Launch and Buy"
-                      : "Launch Token"}
-                </Button>
-              )}
-
-              {hasConfirmedOutcome ? (
-                <div className="flex flex-wrap gap-3">
-                  <Button onClick={handleCreateAnotherToken} type="button" variant="ghost">
-                    Create another token
-                  </Button>
-                </div>
-              ) : null}
-
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  disabled={configState.isLoading}
-                  onClick={() => {
-                    void refreshLaunchConfig();
-                  }}
-                  type="button"
-                  variant="secondary"
-                >
-                  {configState.isLoading ? "Refreshing..." : "Refresh config"}
-                </Button>
-                <Link
-                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 px-4 text-sm font-semibold text-slate-100 transition hover:border-cyan-300/40 hover:bg-white/8 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-300"
-                  href={buildArcScanAddressUrl(
-                    arcDeployment.explorerUrl,
-                    arcDeployment.factoryAddress
-                  )}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  View Factory on ArcScan
-                </Link>
-              </div>
-
-              {submitDisabledReason ? (
-                <p className="text-sm leading-6 text-slate-400">{submitDisabledReason}</p>
-              ) : null}
-            </Card>
-          </section>
-        </Card>
-
-        {success ? <SuccessPanel onReset={handleCreateAnotherToken} success={success} /> : null}
-        {partialSuccess ? (
-          <PartialSuccessPanel onReset={handleCreateAnotherToken} partial={partialSuccess} />
-        ) : null}
-        {!success && !partialSuccess ? (
-          <FeedbackCard feedback={feedback ?? configState.error} />
-        ) : null}
-      </form>
-
-      <aside className="space-y-6 xl:sticky xl:top-24 xl:self-start">
-        <LaunchSummary
-          connectedWalletAddress={walletAddress}
-          initialPurchaseAmount={isInitialPurchaseRequested ? values.initialPurchaseAmount : null}
-          maxMetadataUriLength={maxMetadataUriLength}
-          metadataUriByteLength={metadataPreview.uriByteLength}
-          minimumTokenAmountOut={minimumInitialTokenOutput?.toString(10) ?? null}
-          paused={configState.data?.factory.paused ?? false}
-          purchaseMode={isInitialPurchaseRequested ? "createLaunchAndBuy" : "createLaunch"}
-          values={values}
-        />
-      </aside>
-    </div>
+      {success ? <SuccessPanel onReset={handleCreateAnotherToken} success={success} /> : null}
+      {partialSuccess ? (
+        <PartialSuccessPanel onReset={handleCreateAnotherToken} partial={partialSuccess} />
+      ) : null}
+      {!success && !partialSuccess ? (
+        <FeedbackCard feedback={feedback ?? configState.error} />
+      ) : null}
+    </form>
   );
 }
 

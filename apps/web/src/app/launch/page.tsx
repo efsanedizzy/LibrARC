@@ -3,7 +3,7 @@ import { Container } from "../../components/layout/Container";
 
 export default function LaunchPage() {
   return (
-    <main className="flex-1 py-16 sm:py-20">
+    <main className="flex-1 py-8 sm:py-10">
       <Container>
         <LaunchForm />
       </Container>
