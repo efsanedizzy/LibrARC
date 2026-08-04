@@ -8,7 +8,13 @@ export const ARC_LAUNCHES_API_ERROR_CODES = [
   "CONTRACT_READ_FAILED"
 ] as const;
 
-export const ARC_LAUNCH_SORT_OPTIONS = ["newest", "oldest"] as const;
+export const ARC_LAUNCH_SORT_OPTIONS = [
+  "recentBuys",
+  "newest",
+  "oldest",
+  "marketCap",
+  "volume"
+] as const;
 export const ARC_LAUNCH_STATUS_FILTERS = [
   "all",
   "active",
@@ -16,10 +22,14 @@ export const ARC_LAUNCH_STATUS_FILTERS = [
   "graduated",
   "paused"
 ] as const;
+export const ARC_LAUNCH_TIME_FILTERS = ["all", "24h", "7d"] as const;
 
 export type ArcLaunchesApiErrorCode = (typeof ARC_LAUNCHES_API_ERROR_CODES)[number];
 export type ArcLaunchSort = (typeof ARC_LAUNCH_SORT_OPTIONS)[number];
 export type ArcLaunchStatusFilter = (typeof ARC_LAUNCH_STATUS_FILTERS)[number];
+export type ArcLaunchTimeFilter = (typeof ARC_LAUNCH_TIME_FILTERS)[number];
+export type ArcLaunchMetricKind =
+  "launchId" | "marketCap" | "realUsdcReserve" | "recentBuys" | "volume";
 
 export type ArcLaunchesApiError = {
   ok: false;
@@ -41,6 +51,11 @@ export type ArcLaunchListItem = {
   isRegisteredPool?: boolean;
   isRegisteredToken?: boolean;
   launchId: string;
+  lastBuyBlockNumber?: string;
+  lastBuyLogIndex?: number;
+  lastTradeBlockNumber?: string;
+  marketCap?: string;
+  metricWarningCount?: number;
   name?: string;
   poolAddress: Address;
   poolExplorerUrl: string;
@@ -54,20 +69,27 @@ export type ArcLaunchListItem = {
   tokenExplorerUrl: string;
   tokenPageUrl: string;
   totalSupply?: string;
+  volume?: string;
   warnings: ArcTokenReadIssue[];
 };
 
 export type ArcLaunchesApiSuccess = {
   ok: true;
   currentPage: number;
+  effectiveSortMetricKind: ArcLaunchMetricKind;
+  effectiveSortMetricLabel: string;
   hasNextPage: boolean;
   hasPreviousPage: boolean;
   items: ArcLaunchListItem[];
   limit: number;
+  popularItems: ArcLaunchListItem[];
+  popularMetricKind: ArcLaunchMetricKind;
+  popularMetricLabel: string;
   scanWindowApplied: number;
   search: string;
   sort: ArcLaunchSort;
   status: ArcLaunchStatusFilter;
+  timeFilter: ArcLaunchTimeFilter;
   totalFilteredLaunches: number;
   totalLaunchCount: number;
   totalPages: number;
@@ -81,13 +103,15 @@ export function buildArcLaunchesApiPath({
   page,
   search,
   sort,
-  status
+  status,
+  timeFilter
 }: {
   limit?: number;
   page?: number;
   search?: string;
   sort?: ArcLaunchSort;
   status?: ArcLaunchStatusFilter;
+  timeFilter?: ArcLaunchTimeFilter;
 } = {}) {
   const params = new URLSearchParams();
 
@@ -105,6 +129,10 @@ export function buildArcLaunchesApiPath({
 
   if (status) {
     params.set("status", status);
+  }
+
+  if (timeFilter) {
+    params.set("timeFilter", timeFilter);
   }
 
   if (search?.trim()) {

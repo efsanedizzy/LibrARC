@@ -9,7 +9,7 @@ export function Card({ children, className = "", ...props }: CardProps) {
     <div
       {...props}
       className={[
-        "rounded-[1.75rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-6 shadow-[0_24px_60px_rgba(2,6,23,0.45)] backdrop-blur",
+        "rounded-[var(--radius-lg)] border border-[var(--border-soft)] bg-[var(--bg-surface)] p-5 shadow-[var(--shadow-soft)] backdrop-blur",
         className
       ]
         .filter(Boolean)

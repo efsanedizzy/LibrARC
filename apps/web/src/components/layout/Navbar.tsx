@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
@@ -27,37 +28,37 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50">
-      <div className="border-b border-white/8 bg-[rgba(4,8,22,0.8)] backdrop-blur-xl">
-        <Container className="py-4">
-          <div className="flex items-center gap-3">
-            <div className="min-w-0 flex-1">
+      <div className="border-b border-[var(--border-soft)] bg-[rgba(21,25,34,0.9)] backdrop-blur-md">
+        <Container className="py-3">
+          <div className="flex min-h-[76px] items-center justify-between gap-3 md:grid md:grid-cols-[1fr_auto_1fr] md:gap-4">
+            <div className="min-w-0 md:justify-self-start">
               <Link
-                className="inline-flex items-center gap-3 rounded-full focus-visible:outline-offset-4"
+                className="inline-flex items-center gap-3 rounded-[0.9rem] focus-visible:outline-offset-4"
                 href="/"
                 onClick={() => setIsMenuOpen(false)}
               >
-                <span
-                  aria-hidden="true"
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-cyan-200/15 bg-[radial-gradient(circle_at_30%_30%,rgba(103,232,249,0.98),rgba(15,118,110,0.85)_60%,rgba(4,8,22,0.7)_100%)] text-lg font-black text-slate-950 shadow-[0_0_28px_rgba(34,211,238,0.2)]"
-                >
-                  L
+                <span className="surface-muted flex h-[46px] w-[46px] min-w-[46px] shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--border-strong)] shadow-[0_8px_20px_rgba(12,20,36,0.18)] sm:h-[56px] sm:w-[56px] sm:min-w-[56px]">
+                  <span className="relative h-full w-full overflow-hidden rounded-full">
+                    <Image
+                      alt="LibrARC"
+                      className="scale-[1.2] object-cover"
+                      fill
+                      priority
+                      sizes="(min-width: 640px) 56px, 46px"
+                      src="/librarc-logo.png"
+                    />
+                  </span>
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-lg font-semibold tracking-tight text-white">
+                  <span className="block text-[1.08rem] font-semibold tracking-tight text-white sm:text-[1.12rem]">
                     LibrARC
-                  </span>
-                  <span className="block text-[0.68rem] font-medium uppercase tracking-[0.32em] text-[var(--text-faint)]">
-                    Arc Testnet
                   </span>
                 </span>
               </Link>
             </div>
 
-            <nav
-              aria-label="Primary navigation"
-              className="hidden md:flex md:flex-1 md:justify-center"
-            >
-              <ul className="surface-muted flex items-center gap-1 rounded-full p-1.5">
+            <nav aria-label="Primary navigation" className="hidden md:block md:justify-self-center">
+              <ul className="flex items-center gap-1 rounded-[var(--radius-md)] border border-[var(--border-soft)] bg-[var(--bg-elevated)] p-1">
                 {navigation.map((item) => {
                   const isActive = isActivePath(pathname, item.href);
 
@@ -65,10 +66,10 @@ export function Navbar() {
                     <li key={item.href}>
                       <Link
                         className={[
-                          "inline-flex min-h-10 items-center rounded-full px-4 text-sm font-medium transition",
+                          "inline-flex min-h-9 items-center rounded-[0.8rem] px-4 text-sm font-medium transition",
                           isActive
-                            ? "bg-[rgba(94,234,212,0.12)] text-white shadow-[inset_0_0_0_1px_rgba(94,234,212,0.2)]"
-                            : "text-[var(--text-muted)] hover:bg-white/6 hover:text-white"
+                            ? "bg-[var(--bg-surface-strong)] text-white shadow-[inset_0_0_0_1px_rgba(76,128,255,0.18)]"
+                            : "text-[var(--text-muted)] hover:bg-[var(--bg-surface)] hover:text-white"
                         ].join(" ")}
                         href={item.href}
                       >
@@ -80,8 +81,8 @@ export function Navbar() {
               </ul>
             </nav>
 
-            <div className="ml-auto flex items-center gap-2 md:gap-3">
-              <div className="flex w-auto justify-end md:min-w-[14rem] md:max-w-[14rem]">
+            <div className="flex items-center gap-2 md:justify-self-end">
+              <div className="flex min-w-0 justify-end md:w-auto">
                 <WalletConnectButton />
               </div>
 
@@ -89,7 +90,7 @@ export function Navbar() {
                 aria-controls="mobile-navigation"
                 aria-expanded={isMenuOpen}
                 aria-label={isMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-                className="surface-muted inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:text-white md:hidden"
+                className="surface-muted inline-flex h-10 w-10 items-center justify-center rounded-[0.9rem] text-[var(--text-secondary)] transition hover:text-white md:hidden"
                 onClick={() => setIsMenuOpen((current) => !current)}
                 type="button"
               >
@@ -121,7 +122,7 @@ export function Navbar() {
           {isMenuOpen ? (
             <nav
               aria-label="Mobile navigation"
-              className="surface-panel mt-4 rounded-[var(--radius-lg)] p-2 md:hidden"
+              className="surface-panel mt-3 rounded-[var(--radius-lg)] p-2 md:hidden"
               id="mobile-navigation"
             >
               <ul className="flex flex-col gap-1">
@@ -132,10 +133,10 @@ export function Navbar() {
                     <li key={item.href}>
                       <Link
                         className={[
-                          "flex min-h-11 items-center rounded-[var(--radius-md)] px-4 text-sm font-medium transition",
+                          "flex min-h-10 items-center rounded-[var(--radius-md)] px-4 text-sm font-medium transition",
                           isActive
-                            ? "bg-[rgba(94,234,212,0.12)] text-white"
-                            : "text-[var(--text-secondary)] hover:bg-white/6 hover:text-white"
+                            ? "bg-[var(--bg-surface-strong)] text-white"
+                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-surface)] hover:text-white"
                         ].join(" ")}
                         href={item.href}
                         onClick={() => setIsMenuOpen(false)}

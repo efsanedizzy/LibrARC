@@ -35,6 +35,19 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     const response: ArcTokenApiSuccess = {
       ok: true,
+      about: {
+        creator: data.creator,
+        description: data.description,
+        discord: data.discord,
+        image: data.image,
+        launchId: data.launchId === undefined ? undefined : toBigIntString(data.launchId),
+        marketCap: data.marketCap === undefined ? undefined : toBigIntString(data.marketCap),
+        metadataHash: data.metadataHash,
+        metadataUri: data.metadataUri,
+        telegram: data.telegram,
+        website: data.website,
+        x: data.x
+      },
       token: {
         address: tokenAddress,
         name: data.tokenName,

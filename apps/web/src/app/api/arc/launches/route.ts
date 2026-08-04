@@ -10,6 +10,7 @@ import {
   parseLaunchesSearchParam,
   parseLaunchesSortParam,
   parseLaunchesStatusParam,
+  parseLaunchesTimeFilterParam,
   readFactoryLaunchesPage
 } from "../../../../lib/arc/launches-server";
 import { jsonNoStore } from "../../../../lib/arc/server-routes";
@@ -22,6 +23,7 @@ export async function GET(request: NextRequest) {
     const limit = parseLaunchesLimitParam(request.nextUrl.searchParams.get("limit"));
     const sort = parseLaunchesSortParam(request.nextUrl.searchParams.get("sort"));
     const status = parseLaunchesStatusParam(request.nextUrl.searchParams.get("status"));
+    const timeFilter = parseLaunchesTimeFilterParam(request.nextUrl.searchParams.get("timeFilter"));
     const search = parseLaunchesSearchParam(request.nextUrl.searchParams.get("search"));
 
     const result = await readFactoryLaunchesPage({
@@ -29,7 +31,8 @@ export async function GET(request: NextRequest) {
       limit,
       sort,
       status,
-      search
+      search,
+      timeFilter
     });
 
     return jsonNoStore(200, {
@@ -39,10 +42,16 @@ export async function GET(request: NextRequest) {
       hasPreviousPage: result.hasPreviousPage,
       items: result.items,
       limit: result.limit,
+      popularItems: result.popularItems,
+      popularMetricKind: result.popularMetricKind,
+      popularMetricLabel: result.popularMetricLabel,
+      effectiveSortMetricKind: result.effectiveSortMetricKind,
+      effectiveSortMetricLabel: result.effectiveSortMetricLabel,
       scanWindowApplied: result.scanWindowApplied,
       search,
       sort,
       status,
+      timeFilter: result.timeFilter,
       totalFilteredLaunches: result.totalFilteredLaunches,
       totalLaunchCount: result.totalLaunchCount,
       totalPages: result.totalPages,

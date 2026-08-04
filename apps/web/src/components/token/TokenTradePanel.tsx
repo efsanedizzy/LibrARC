@@ -3,11 +3,18 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { BaseError, useConnection, useSwitchChain, useWriteContract } from "wagmi";
-import { formatUnits, type Address, getAddress } from "viem";
+import { type Address, getAddress } from "viem";
 
 import { erc20Abi, launchPoolAbi } from "../../lib/arc/abis";
 import { arcDeployment } from "../../lib/arc/config";
-import { formatCompactAddress, formatTokenAmount, formatUsdcAmount } from "../../lib/arc/format";
+import {
+  formatCompactAddress,
+  formatCompactTokenAmount,
+  formatCompactUsdcAmount,
+  formatTokenAmount,
+  formatUsdcAmount
+} from "../../lib/arc/format";
+import { ARC_ORDER_SUPPORT } from "../../lib/arc/order-support";
 import {
   buildArcTradeApiPath,
   isArcApproveSimulationSuccess,
@@ -36,7 +43,15 @@ import {
 import { arcTestnet } from "../../lib/chains/arc-testnet";
 import { type ArcTokenApiSuccess } from "../../lib/arc/token-api";
 import { Button } from "../ui/Button";
+import { SegmentedControl } from "../ui/SegmentedControl";
 import { WalletConnectButton } from "../wallet/WalletConnectButton";
+import {
+  activateTradeInput,
+  applyPercentagePreset,
+  DEFAULT_TRADE_PANEL_TAB,
+  switchTradeMode,
+  type TradePanelTab
+} from "./market-state";
 
 type TokenTradePanelProps = {
   data: ArcTokenApiSuccess | null;
@@ -424,7 +439,7 @@ function getActionButtonLabel({
     return "Trading unavailable";
   }
 
-  return activeMode === "buy" ? "Buy tokens" : "Sell tokens";
+  return activeMode === "buy" ? `Buy ${tradeData.token.symbol}` : `Sell ${tradeData.token.symbol}`;
 }
 
 function getApprovalSummary({
@@ -462,12 +477,14 @@ export function TokenTradePanel({
   const connection = useConnection();
   const { mutateAsync: switchChainAsync, isPending: isSwitchPending } = useSwitchChain();
   const { mutateAsync: writeContractAsync, isPending: isWritePending } = useWriteContract();
+  const [activeTab, setActiveTab] = useState<TradePanelTab>(DEFAULT_TRADE_PANEL_TAB);
   const [activeMode, setActiveMode] = useState<TradeMode>("buy");
   const [buyInput, setBuyInput] = useState("");
   const [sellInput, setSellInput] = useState("");
   const [slippageMode, setSlippageMode] = useState<"preset" | "custom">("preset");
   const [presetSlippageBps, setPresetSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS);
   const [customSlippageInput, setCustomSlippageInput] = useState("1.00");
+  const [showSlippageControls, setShowSlippageControls] = useState(false);
   const [buyQuoteState, setBuyQuoteState] = useState<QuoteState>({ status: "idle" });
   const [sellQuoteState, setSellQuoteState] = useState<QuoteState>({ status: "idle" });
   const [feedback, setFeedback] = useState<TradeFeedback | null>(null);
@@ -1143,6 +1160,17 @@ export function TokenTradePanel({
     feedback,
     tokenSymbol
   });
+  const isTradeBusy = Boolean(feedback && !TERMINAL_PHASES.has(feedback.phase));
+  const actionStatusMessage =
+    feedback?.mode === activeMode && !TERMINAL_PHASES.has(feedback.phase)
+      ? formatPhaseLabel(feedback.phase)
+      : quoteState.status === "loading"
+        ? "Getting quote..."
+        : approvalSummary;
+  const activeAllowanceSummary =
+    activeMode === "buy"
+      ? formatAllowance(usdcAllowance, 6, "USDC")
+      : formatAllowance(tokenAllowance, tokenDecimals, tokenSymbol);
 
   function handleResetTradeState() {
     setFeedback(null);
@@ -1159,376 +1187,583 @@ export function TokenTradePanel({
     }
   }
 
-  function handleSetMax() {
+  function handleSellInputChange(nextValue: string) {
+    const nextState = activateTradeInput(
+      {
+        activeMode,
+        buyInput,
+        sellInput
+      },
+      "sell",
+      nextValue
+    );
+
+    setActiveMode(nextState.activeMode);
+    setBuyInput(nextState.buyInput);
+    setSellInput(nextState.sellInput);
+
+    if (!nextState.buyInput.trim()) {
+      setBuyQuoteState({ status: "idle" });
+    }
+  }
+
+  function handleBuyInputChange(nextValue: string) {
+    const nextState = activateTradeInput(
+      {
+        activeMode,
+        buyInput,
+        sellInput
+      },
+      "buy",
+      nextValue
+    );
+
+    setActiveMode(nextState.activeMode);
+    setBuyInput(nextState.buyInput);
+    setSellInput(nextState.sellInput);
+
+    if (!nextState.sellInput.trim()) {
+      setSellQuoteState({ status: "idle" });
+    }
+  }
+
+  function handleSwitchDirection() {
+    const nextState = switchTradeMode({
+      activeMode,
+      buyInput,
+      sellInput
+    });
+
+    setActiveMode(nextState.activeMode);
+    setBuyInput(nextState.buyInput);
+    setSellInput(nextState.sellInput);
+    setBuyQuoteState(nextState.buyInput.trim() ? buyQuoteState : { status: "idle" });
+    setSellQuoteState(nextState.sellInput.trim() ? sellQuoteState : { status: "idle" });
+  }
+
+  function handleSetPercentage(percent: 25 | 50 | 75 | 100) {
     if (activeMode === "buy") {
-      setBuyInput(formatUnits(buyBalance, 6));
+      handleBuyInputChange(
+        applyPercentagePreset({
+          balance: buyBalance,
+          decimals: 6,
+          percent
+        })
+      );
       return;
     }
 
-    setSellInput(formatUnits(sellBalance, tokenDecimals));
+    handleSellInputChange(
+      applyPercentagePreset({
+        balance: sellBalance,
+        decimals: tokenDecimals,
+        percent
+      })
+    );
   }
 
   return (
-    <aside className="surface-panel rounded-[var(--radius-xl)] p-5 sm:p-6">
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="eyebrow">Trade</p>
-            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-              Buy or sell on Arc
-            </h2>
+    <aside className="surface-card w-full max-w-[21.25rem] overflow-hidden rounded-[1.55rem] border border-[rgba(82,95,117,0.5)] bg-[linear-gradient(180deg,rgba(76,128,255,0.055),rgba(24,30,40,0.985)_15%,rgba(18,23,31,0.995))] p-4 sm:p-5">
+      <div className="space-y-4">
+        {tradeData ? (
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[1rem] border border-[rgba(82,95,117,0.42)] bg-[rgba(50,108,255,0.12)] text-sm font-black tracking-[0.16em] text-white sm:h-[3.25rem] sm:w-[3.25rem]">
+              {tokenSymbol.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="min-w-0 flex-1 truncate text-[1.08rem] font-semibold tracking-tight text-white">
+                  {tradeData.token.name}
+                </h2>
+                <span className="rounded-full border border-[rgba(82,95,117,0.42)] px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-[var(--text-secondary)]">
+                  {tradeData.pool.statusLabel}
+                </span>
+              </div>
+              <p className="mt-1 text-[0.78rem] font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+                {tokenSymbol}
+              </p>
+            </div>
           </div>
-          <TradeStatusPill
-            label={approvalSummary}
-            tone={
-              approvalSummary === "Approval confirmed"
-                ? "neutral"
-                : approvalSummary === "Approval required"
-                  ? "warning"
-                  : "success"
-            }
-          />
-        </div>
-        <p className="text-sm leading-6 text-[var(--text-muted)]">
-          Arc Testnet only - test assets have no monetary value.
-        </p>
-      </div>
+        ) : null}
 
-      <div className="surface-muted mt-6 rounded-full p-1" role="tablist" aria-label="Trade mode">
-        <button
-          aria-selected={activeMode === "buy"}
-          className={[
-            "min-h-11 flex-1 rounded-full px-4 py-2 text-sm font-semibold transition",
-            activeMode === "buy"
-              ? "bg-[rgba(94,234,212,0.12)] text-white"
-              : "text-[var(--text-muted)] hover:text-white"
-          ].join(" ")}
-          onClick={() => setActiveMode("buy")}
-          role="tab"
-          type="button"
-        >
-          Buy
-        </button>
-        <button
-          aria-selected={activeMode === "sell"}
-          className={[
-            "min-h-11 flex-1 rounded-full px-4 py-2 text-sm font-semibold transition",
-            activeMode === "sell"
-              ? "bg-[rgba(94,234,212,0.12)] text-white"
-              : "text-[var(--text-muted)] hover:text-white"
-          ].join(" ")}
-          onClick={() => setActiveMode("sell")}
-          role="tab"
-          type="button"
-        >
-          Sell
-        </button>
+        <SegmentedControl
+          ariaLabel="Trading panels"
+          onChange={setActiveTab}
+          options={[
+            { label: "Market", value: "market" },
+            { label: "Limit", value: "limit" },
+            { label: "Orders", value: "orders" }
+          ]}
+          value={activeTab}
+        />
       </div>
 
       {isPageLoading && !tradeData ? (
-        <div className="mt-6 animate-pulse space-y-4">
-          <div className="h-20 rounded-[var(--radius-md)] bg-white/6" />
-          <div className="h-28 rounded-[var(--radius-md)] bg-white/6" />
-          <div className="h-44 rounded-[var(--radius-md)] bg-white/6" />
+        <div className="mt-5 animate-pulse space-y-3">
+          <div className="h-12 rounded-[var(--radius-md)] bg-white/6" />
+          <div className="h-40 rounded-[1.25rem] bg-white/6" />
+          <div className="h-40 rounded-[1.25rem] bg-white/6" />
         </div>
       ) : null}
 
       {tradeData ? (
-        <div className="mt-6 space-y-5">
-          <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
-            <div className="flex items-center justify-between gap-4">
-              <label
-                className="text-sm font-semibold text-white"
-                htmlFor={activeMode === "buy" ? "buy-usdc-input" : "sell-token-input"}
-              >
-                {activeMode === "buy" ? "USDC input" : `${tokenSymbol} input`}
-              </label>
-              <button
-                className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-secondary)] transition hover:border-cyan-300/30 hover:text-white"
-                disabled={activeMode === "buy" ? buyBalance === 0n : sellBalance === 0n}
-                onClick={handleSetMax}
-                type="button"
-              >
-                Max
-              </button>
-            </div>
-
-            <div className="mt-4">
-              <div className="field-shell min-h-[4.25rem] justify-between gap-3 rounded-[var(--radius-lg)] px-4">
-                <input
-                  className="min-w-0 flex-1 bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-[var(--text-faint)]"
-                  disabled={Boolean(feedback && !TERMINAL_PHASES.has(feedback.phase))}
-                  id={activeMode === "buy" ? "buy-usdc-input" : "sell-token-input"}
-                  inputMode="decimal"
-                  onChange={(event) =>
-                    activeMode === "buy"
-                      ? setBuyInput(event.target.value)
-                      : setSellInput(event.target.value)
-                  }
-                  placeholder="0.00"
-                  value={activeMode === "buy" ? buyInput : sellInput}
-                />
-                <div className="text-right">
-                  <p className="text-sm font-medium text-white">
-                    {activeMode === "buy" ? "USDC" : tokenSymbol}
-                  </p>
-                  <p className="mt-1 text-xs uppercase tracking-[0.22em] text-[var(--text-faint)]">
-                    {activeMode === "buy" ? "6 decimals" : `${tokenDecimals} decimals`}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-[var(--radius-md)] border border-white/10 bg-[rgba(4,8,20,0.65)] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
-                  {activeMode === "buy" ? "Wallet USDC balance" : `Wallet ${tokenSymbol} balance`}
-                </p>
-                <p className="mt-2 text-base font-semibold text-white tabular-nums">
-                  {activeMode === "buy"
-                    ? `${formatUsdcAmount(buyBalance)} USDC`
-                    : formatTokenAmount(sellBalance, tokenDecimals)}
-                </p>
-              </div>
-              <div className="rounded-[var(--radius-md)] border border-white/10 bg-[rgba(4,8,20,0.65)] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
-                  {activeMode === "buy" ? "Allowance to pool" : `${tokenSymbol} allowance`}
-                </p>
-                <p className="mt-2 text-base font-semibold text-white tabular-nums">
-                  {activeMode === "buy"
-                    ? formatAllowance(usdcAllowance, 6, "USDC")
-                    : formatAllowance(tokenAllowance, tokenDecimals, tokenSymbol)}
-                </p>
-                <p
-                  className="mt-2 truncate text-xs leading-5 text-[var(--text-faint)]"
-                  title={poolAddress}
-                >
-                  Spender: {poolAddress ? formatCompactAddress(poolAddress) : "Unavailable"}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-white">Slippage</p>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">
-                  Allowed range: 0.10% to 5.00%.
-                </p>
-              </div>
-              <p className="text-sm font-semibold tabular-nums text-white">
-                {effectiveSlippageBps !== null
-                  ? formatSlippageBps(effectiveSlippageBps)
-                  : "Invalid"}
-              </p>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {SLIPPAGE_PRESET_BPS.map((preset) => (
-                <button
+        <div className="mt-4 space-y-3.5">
+          {activeTab === "market" ? (
+            <>
+              <section className="space-y-0">
+                <div
                   className={[
-                    "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
-                    slippageMode === "preset" && presetSlippageBps === preset
-                      ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100"
-                      : "border-white/10 text-[var(--text-secondary)] hover:border-cyan-300/25 hover:text-white"
+                    "flex min-h-[10.5rem] flex-col rounded-[1.35rem] border p-4 transition sm:p-5",
+                    activeMode === "sell"
+                      ? "border-[rgba(76,128,255,0.5)] bg-[linear-gradient(180deg,rgba(50,108,255,0.12),rgba(32,39,51,0.95))] shadow-[inset_0_0_0_1px_rgba(76,128,255,0.08)]"
+                      : "border-[var(--border-soft)] bg-[rgba(32,39,51,0.92)]"
                   ].join(" ")}
-                  key={preset}
-                  onClick={() => {
-                    setSlippageMode("preset");
-                    setPresetSlippageBps(preset);
-                    setCustomSlippageInput((preset / 100).toFixed(2));
-                  }}
-                  type="button"
                 >
-                  {formatSlippageBps(preset)}
-                </button>
-              ))}
-            </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p
+                      className={[
+                        "text-sm font-semibold transition",
+                        activeMode === "sell" ? "text-white" : "text-[var(--text-secondary)]"
+                      ].join(" ")}
+                    >
+                      Sell
+                    </p>
+                    <span className="text-xs text-[var(--text-faint)]">Token input</span>
+                  </div>
 
-            <div className="mt-4">
-              <label
-                className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]"
-                htmlFor="custom-slippage-input"
-              >
-                Custom slippage
-              </label>
-              <div className="mt-2 flex items-center gap-3">
-                <input
-                  className="field-shell min-h-11 flex-1 text-sm"
-                  id="custom-slippage-input"
-                  inputMode="decimal"
-                  max="5"
-                  min="0.1"
-                  onChange={(event) => {
-                    setSlippageMode("custom");
-                    setCustomSlippageInput(event.target.value);
-                  }}
-                  placeholder="1.00"
-                  value={customSlippageInput}
-                />
-                <span className="text-sm text-[var(--text-muted)]">%</span>
-              </div>
-            </div>
-          </div>
-
-          {activeQuote ? (
-            <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-white">Quote breakdown</p>
-                  <p className="mt-1 text-xs leading-5 text-[var(--text-faint)]">
-                    {activeMode === "buy"
-                      ? "Server-side quote and simulation from the active pool."
-                      : "Exact sell quote using current LaunchPool state."}
-                  </p>
-                </div>
-                <TradeStatusPill
-                  label={quoteState.status === "loading" ? "Getting quote" : "Quote ready"}
-                  tone={quoteState.status === "loading" ? "warning" : "success"}
-                />
-              </div>
-
-              {activeMode === "buy" && selectedBuyQuote ? (
-                <dl className="mt-5 space-y-3">
-                  <DetailRow
-                    label="Expected token output"
-                    value={formatTokenAmount(
-                      BigInt(selectedBuyQuote.quote.tokenAmountOut),
-                      tokenDecimals
-                    )}
+                  <label className="sr-only" htmlFor="sell-token-input">
+                    Sell {tokenSymbol}
+                  </label>
+                  <input
+                    className="mt-4 w-full bg-transparent text-[2.5rem] font-semibold tracking-tight text-white outline-none placeholder:text-[var(--text-faint)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    disabled={isTradeBusy}
+                    id="sell-token-input"
+                    inputMode="decimal"
+                    onChange={(event) => handleSellInputChange(event.target.value)}
+                    onFocus={() => setActiveMode("sell")}
+                    placeholder="0"
+                    value={sellInput}
                   />
-                  <DetailRow
-                    label="Buy fee"
-                    value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.fee))} USDC`}
-                  />
-                  <DetailRow
-                    label="Minimum received"
-                    value={
-                      buyMinimumReceived !== null
-                        ? formatTokenAmount(buyMinimumReceived, tokenDecimals)
-                        : "Unavailable"
+                  <p
+                    className="mt-2 min-h-5 text-sm tabular-nums text-[var(--text-muted)]"
+                    title={
+                      selectedSellQuote
+                        ? `${formatUsdcAmount(BigInt(selectedSellQuote.quote.netUsdcAmountOut))} USDC`
+                        : undefined
                     }
+                  >
+                    {selectedSellQuote
+                      ? `~${formatCompactUsdcAmount(BigInt(selectedSellQuote.quote.netUsdcAmountOut))} USDC`
+                      : sellQuoteState.status === "loading"
+                        ? "Getting quote..."
+                        : "-"}
+                  </p>
+                  <div className="mt-auto flex min-w-0 items-center justify-between gap-3 pt-6 text-xs text-[var(--text-secondary)]">
+                    <span className="inline-flex min-w-0 items-center gap-2 rounded-full border border-[rgba(82,95,117,0.42)] bg-[rgba(13,17,24,0.36)] px-3 py-1.5 font-semibold text-white">
+                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[rgba(50,108,255,0.16)] text-[0.62rem] font-bold">
+                        {tokenSymbol.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="truncate">{tokenSymbol}</span>
+                    </span>
+                    <span
+                      className="min-w-0 truncate text-right"
+                      title={formatTokenAmount(sellBalance, tokenDecimals)}
+                    >
+                      {formatCompactTokenAmount(sellBalance, tokenDecimals)} available
+                    </span>
+                  </div>
+                </div>
+
+                <div className="relative z-10 -my-2 flex justify-center">
+                  <button
+                    aria-label="Switch trade direction"
+                    className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-[rgba(82,95,117,0.5)] bg-[rgba(37,46,60,0.96)] text-transparent shadow-[0_8px_20px_rgba(6,10,18,0.35)] transition hover:border-[var(--border-strong)] hover:text-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(76,128,255,0.58)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-elevated)]"
+                    onClick={handleSwitchDirection}
+                    type="button"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      className="pointer-events-none absolute h-4 w-4 text-[var(--text-secondary)]"
+                      fill="none"
+                      viewBox="0 0 16 16"
+                    >
+                      <path
+                        d="M4 5.25h7.5M9.75 2.5 12.5 5.25 9.75 8M12 10.75H4.5M6.25 8 3.5 10.75 6.25 13.5"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="1.4"
+                      />
+                    </svg>
+                    ↕
+                  </button>
+                </div>
+
+                <div
+                  className={[
+                    "flex min-h-[10.5rem] flex-col rounded-[1.35rem] border p-4 transition sm:p-5",
+                    activeMode === "buy"
+                      ? "border-[rgba(76,128,255,0.5)] bg-[linear-gradient(180deg,rgba(50,108,255,0.12),rgba(32,39,51,0.95))] shadow-[inset_0_0_0_1px_rgba(76,128,255,0.08)]"
+                      : "border-[var(--border-soft)] bg-[rgba(32,39,51,0.92)]"
+                  ].join(" ")}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p
+                      className={[
+                        "text-sm font-semibold transition",
+                        activeMode === "buy" ? "text-white" : "text-[var(--text-secondary)]"
+                      ].join(" ")}
+                    >
+                      Buy
+                    </p>
+                    <span className="text-xs text-[var(--text-faint)]">Arc USDC input</span>
+                  </div>
+
+                  <label className="sr-only" htmlFor="buy-usdc-input">
+                    Buy {tokenSymbol} with Arc USDC
+                  </label>
+                  <input
+                    className="mt-4 w-full bg-transparent text-[2.5rem] font-semibold tracking-tight text-white outline-none placeholder:text-[var(--text-faint)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    disabled={isTradeBusy}
+                    id="buy-usdc-input"
+                    inputMode="decimal"
+                    onChange={(event) => handleBuyInputChange(event.target.value)}
+                    onFocus={() => setActiveMode("buy")}
+                    placeholder="0"
+                    value={buyInput}
                   />
-                  <DetailRow
-                    label="Net USDC input"
-                    value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.netUsdcIn))} USDC`}
-                  />
-                  <DetailRow
-                    label="Next reserve"
-                    value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.nextState.realUsdcReserve))} USDC`}
-                  />
-                  {selectedBuyQuote.reachesGraduationThreshold ? (
-                    <div className="rounded-[var(--radius-md)] border border-amber-300/18 bg-amber-300/8 px-4 py-3 text-sm leading-6 text-amber-100">
-                      This buy reaches the graduation threshold exactly. The pool will move to
+                  <p
+                    className="mt-2 min-h-5 text-sm tabular-nums text-[var(--text-muted)]"
+                    title={
+                      selectedBuyQuote
+                        ? `${formatTokenAmount(BigInt(selectedBuyQuote.quote.tokenAmountOut), tokenDecimals)} ${tokenSymbol}`
+                        : undefined
+                    }
+                  >
+                    {selectedBuyQuote
+                      ? `~${formatCompactTokenAmount(BigInt(selectedBuyQuote.quote.tokenAmountOut), tokenDecimals)} ${tokenSymbol}`
+                      : buyQuoteState.status === "loading"
+                        ? "Getting quote..."
+                        : "-"}
+                  </p>
+                  <div className="mt-auto flex min-w-0 items-center justify-between gap-3 pt-6 text-xs text-[var(--text-secondary)]">
+                    <span className="inline-flex min-w-0 items-center gap-2 rounded-full border border-[rgba(82,95,117,0.42)] bg-[rgba(13,17,24,0.36)] px-3 py-1.5 font-semibold text-white">
+                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[rgba(50,108,255,0.16)] text-[0.6rem] font-bold">
+                        US
+                      </span>
+                      <span className="truncate">USDC</span>
+                    </span>
+                    <span
+                      className="min-w-0 truncate text-right"
+                      title={formatUsdcAmount(buyBalance)}
+                    >
+                      {formatCompactUsdcAmount(buyBalance)} available
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid grid-cols-2 gap-2 min-[390px]:grid-cols-4">
+                {([25, 50, 75, 100] as const).map((preset) => {
+                  const presetValue =
+                    activeMode === "buy"
+                      ? applyPercentagePreset({
+                          balance: buyBalance,
+                          decimals: 6,
+                          percent: preset
+                        })
+                      : applyPercentagePreset({
+                          balance: sellBalance,
+                          decimals: tokenDecimals,
+                          percent: preset
+                        });
+                  const isSelected =
+                    activeMode === "buy" ? buyInput === presetValue : sellInput === presetValue;
+
+                  return (
+                    <button
+                      aria-pressed={isSelected}
+                      className={[
+                        "min-h-10 rounded-[0.95rem] border px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(76,128,255,0.58)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-elevated)]",
+                        isSelected
+                          ? "border-[var(--border-strong)] bg-[rgba(50,108,255,0.14)] text-white"
+                          : "border-[var(--border-soft)] bg-[rgba(255,255,255,0.02)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-strong)] hover:text-white"
+                      ].join(" ")}
+                      disabled={!isConnected || isTradeBusy}
+                      key={preset}
+                      onClick={() => handleSetPercentage(preset)}
+                      type="button"
+                    >
+                      {preset}%
+                    </button>
+                  );
+                })}
+              </section>
+
+              <section className="rounded-[1rem] border border-[rgba(82,95,117,0.42)] bg-[rgba(255,255,255,0.02)] px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-[var(--text-secondary)]">Slippage</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold tabular-nums text-white">
+                      {effectiveSlippageBps !== null
+                        ? formatSlippageBps(effectiveSlippageBps)
+                        : "Invalid"}
+                    </span>
+                    <button
+                      className="rounded-full border border-[var(--border-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary)] transition hover:border-[var(--border-strong)] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(76,128,255,0.58)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-elevated)]"
+                      onClick={() => setShowSlippageControls((current) => !current)}
+                      type="button"
+                    >
+                      Adjust
+                    </button>
+                  </div>
+                </div>
+
+                {showSlippageControls ? (
+                  <div className="mt-3 space-y-3 border-t border-[rgba(82,95,117,0.32)] pt-3">
+                    <div className="flex flex-wrap gap-2">
+                      {SLIPPAGE_PRESET_BPS.map((preset) => (
+                        <button
+                          className={[
+                            "rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(76,128,255,0.58)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-elevated)]",
+                            slippageMode === "preset" && presetSlippageBps === preset
+                              ? "border-[var(--border-strong)] bg-[rgba(50,108,255,0.12)] text-white"
+                              : "border-[var(--border-soft)] text-[var(--text-secondary)] hover:bg-[var(--bg-surface-strong)] hover:text-white"
+                          ].join(" ")}
+                          key={preset}
+                          onClick={() => {
+                            setSlippageMode("preset");
+                            setPresetSlippageBps(preset);
+                            setCustomSlippageInput((preset / 100).toFixed(2));
+                          }}
+                          type="button"
+                        >
+                          {formatSlippageBps(preset)}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <label
+                        className="shrink-0 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-faint)]"
+                        htmlFor="custom-slippage-input"
+                      >
+                        Custom
+                      </label>
+                      <input
+                        className="field-shell min-h-11 flex-1 text-sm"
+                        id="custom-slippage-input"
+                        inputMode="decimal"
+                        max="5"
+                        min="0.1"
+                        onChange={(event) => {
+                          setSlippageMode("custom");
+                          setCustomSlippageInput(event.target.value);
+                        }}
+                        placeholder="1.00"
+                        value={customSlippageInput}
+                      />
+                      <span className="text-sm text-[var(--text-muted)]">%</span>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+
+              {(activeQuote || poolAddress) && quoteState.status !== "error" ? (
+                <details className="rounded-[1rem] border border-[rgba(82,95,117,0.42)] bg-[rgba(255,255,255,0.02)] px-4 py-3">
+                  <summary className="cursor-pointer text-sm font-semibold text-white">
+                    Quote and technical details
+                  </summary>
+
+                  <dl className="mt-3 space-y-2">
+                    <DetailRow label="Allowance" value={activeAllowanceSummary} />
+                    <DetailRow
+                      label="Spender"
+                      value={poolAddress ? formatCompactAddress(poolAddress) : "Unavailable"}
+                    />
+
+                    {activeMode === "buy" && selectedBuyQuote ? (
+                      <>
+                        <DetailRow
+                          label="Expected output"
+                          value={formatTokenAmount(
+                            BigInt(selectedBuyQuote.quote.tokenAmountOut),
+                            tokenDecimals
+                          )}
+                        />
+                        <DetailRow
+                          label="Fee"
+                          value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.fee))} USDC`}
+                        />
+                        <DetailRow
+                          label="Minimum received"
+                          value={
+                            buyMinimumReceived !== null
+                              ? formatTokenAmount(buyMinimumReceived, tokenDecimals)
+                              : "Unavailable"
+                          }
+                        />
+                        <DetailRow
+                          label="Net USDC input"
+                          value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.netUsdcIn))} USDC`}
+                        />
+                        <DetailRow
+                          label="Next reserve"
+                          value={`${formatUsdcAmount(BigInt(selectedBuyQuote.quote.nextState.realUsdcReserve))} USDC`}
+                        />
+                      </>
+                    ) : null}
+
+                    {activeMode === "sell" && selectedSellQuote ? (
+                      <>
+                        <DetailRow
+                          label="Expected output"
+                          value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.netUsdcAmountOut))} USDC`}
+                        />
+                        <DetailRow
+                          label="Gross output"
+                          value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.grossUsdcAmountOut))} USDC`}
+                        />
+                        <DetailRow
+                          label="Fee"
+                          value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.fee))} USDC`}
+                        />
+                        <DetailRow
+                          label="Minimum received"
+                          value={
+                            sellMinimumReceived !== null
+                              ? `${formatUsdcAmount(sellMinimumReceived)} USDC`
+                              : "Unavailable"
+                          }
+                        />
+                        <DetailRow
+                          label="Next reserve"
+                          value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.nextState.realUsdcReserve))} USDC`}
+                        />
+                      </>
+                    ) : null}
+                  </dl>
+
+                  {activeMode === "buy" && selectedBuyQuote?.reachesGraduationThreshold ? (
+                    <div className="mt-3 rounded-[var(--radius-md)] border border-[rgba(214,163,76,0.45)] bg-[rgba(214,163,76,0.08)] px-4 py-3 text-sm leading-6 text-[color:var(--warning)]">
+                      This buy reaches the graduation threshold exactly. The pool moves to
                       Graduation Pending after a successful trade.
                     </div>
                   ) : null}
-                </dl>
+                </details>
               ) : null}
 
-              {activeMode === "sell" && selectedSellQuote ? (
-                <dl className="mt-5 space-y-3">
-                  <DetailRow
-                    label="Expected net USDC output"
-                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.netUsdcAmountOut))} USDC`}
-                  />
-                  <DetailRow
-                    label="Gross USDC output"
-                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.grossUsdcAmountOut))} USDC`}
-                  />
-                  <DetailRow
-                    label="Sell fee"
-                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.fee))} USDC`}
-                  />
-                  <DetailRow
-                    label="Minimum received"
-                    value={
-                      sellMinimumReceived !== null
-                        ? `${formatUsdcAmount(sellMinimumReceived)} USDC`
-                        : "Unavailable"
-                    }
-                  />
-                  <DetailRow
-                    label="Next reserve"
-                    value={`${formatUsdcAmount(BigInt(selectedSellQuote.quote.nextState.realUsdcReserve))} USDC`}
-                  />
-                </dl>
-              ) : null}
-            </div>
-          ) : null}
+              <div className="space-y-3 rounded-[1.1rem] border border-[rgba(82,95,117,0.42)] bg-[rgba(255,255,255,0.02)] p-4">
+                {quoteState.status === "error" ? (
+                  <div className="rounded-[var(--radius-md)] border border-[rgba(213,109,120,0.45)] bg-[rgba(213,109,120,0.08)] px-4 py-3 text-sm leading-6 text-[color:var(--danger)]">
+                    {quoteState.error.message}
+                  </div>
+                ) : null}
 
-          {quoteState.status === "error" ? (
-            <div className="rounded-[var(--radius-md)] border border-rose-300/18 bg-rose-300/8 px-4 py-3 text-sm leading-6 text-rose-100">
-              {quoteState.error.message}
-            </div>
-          ) : null}
+                {!isConnected ? (
+                  <div className="space-y-3">
+                    <p className="text-sm leading-6 text-[var(--text-secondary)]">
+                      Connect your browser wallet to quote, approve exact amounts, and trade on Arc
+                      Testnet.
+                    </p>
+                    <div className="w-full">
+                      <WalletConnectButton />
+                    </div>
+                  </div>
+                ) : null}
 
-          {!isConnected ? (
-            <div className="surface-muted rounded-[var(--radius-lg)] p-4 sm:p-5">
-              <p className="text-sm leading-6 text-[var(--text-secondary)]">
-                Connect your browser wallet to quote, approve exact amounts, and trade directly on
-                Arc Testnet.
-              </p>
-              <div className="mt-4 w-fit">
-                <WalletConnectButton />
+                {isConnected && isWrongChain ? (
+                  <div className="space-y-3">
+                    <p className="text-sm leading-6 text-[color:var(--warning)]">
+                      Connected to {connection.chain?.name ?? "the wrong network"}. Switch to Arc
+                      Testnet to continue.
+                    </p>
+                    <Button
+                      className="w-full justify-center"
+                      disabled={isSwitchPending}
+                      onClick={() => {
+                        void handleSwitchNetwork().catch((error) => {
+                          setFeedback({
+                            mode: activeMode,
+                            phase: isWalletRejection(error) ? "rejected by user" : "wrong chain",
+                            message: formatWalletError(error, "Unable to switch to Arc Testnet.")
+                          });
+                        });
+                      }}
+                    >
+                      {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
+                    </Button>
+                  </div>
+                ) : null}
+
+                {isConnected && !isWrongChain ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="font-semibold uppercase tracking-[0.18em] text-[var(--text-faint)]">
+                        {activeMode}
+                      </span>
+                      <span className="text-right text-[var(--text-secondary)]">
+                        {actionStatusMessage}
+                      </span>
+                    </div>
+                    <Button
+                      className="min-h-14 w-full justify-center rounded-[1.15rem]"
+                      disabled={Boolean(activeDisabledReason) || isSwitchPending || isWritePending}
+                      fullWidth
+                      onClick={() => {
+                        if (activeMode === "buy") {
+                          void handleExecuteBuy();
+                          return;
+                        }
+
+                        void handleExecuteSell();
+                      }}
+                    >
+                      <span className="inline-flex min-h-5 items-center justify-center">
+                        {actionButtonLabel}
+                      </span>
+                    </Button>
+                  </>
+                ) : null}
+                {activeDisabledReason && isConnected && !isWrongChain ? (
+                  <p className="text-sm leading-6 text-[var(--text-muted)]">
+                    {activeDisabledReason}
+                  </p>
+                ) : null}
               </div>
-            </div>
-          ) : null}
 
-          {isConnected && isWrongChain ? (
-            <div className="rounded-[var(--radius-lg)] border border-amber-300/18 bg-amber-300/8 p-4 sm:p-5">
-              <p className="text-sm leading-6 text-amber-50">
-                Your wallet is connected to {connection.chain?.name ?? "the wrong network"}. Switch
-                to Arc Testnet to trade this pool.
+              <p className="px-1 text-[0.78rem] leading-5 text-[var(--text-faint)]">
+                Arc Testnet only - test assets have no monetary value.
               </p>
-              <div className="mt-4 w-fit">
-                <Button
-                  disabled={isSwitchPending}
-                  onClick={() => {
-                    void handleSwitchNetwork().catch((error) => {
-                      setFeedback({
-                        mode: activeMode,
-                        phase: isWalletRejection(error) ? "rejected by user" : "wrong chain",
-                        message: formatWalletError(error, "Unable to switch to Arc Testnet.")
-                      });
-                    });
-                  }}
-                  size="sm"
-                >
-                  {isSwitchPending ? "Switching..." : "Switch to Arc Testnet"}
-                </Button>
-              </div>
-            </div>
+            </>
           ) : null}
 
-          {tradeData ? (
-            <div className="space-y-3">
-              <Button
-                className="w-full justify-center"
-                disabled={
-                  isConnected && !isWrongChain
-                    ? Boolean(activeDisabledReason) || isSwitchPending || isWritePending
-                    : true
-                }
-                fullWidth
-                onClick={() => {
-                  if (activeMode === "buy") {
-                    void handleExecuteBuy();
-                    return;
-                  }
+          {activeTab === "limit" ? (
+            <section className="rounded-[1.25rem] border border-[rgba(82,95,117,0.42)] bg-[rgba(255,255,255,0.02)] p-4">
+              <p className="text-base font-semibold text-white">Limit orders</p>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                Limit orders are not available in the current LibrARC deployment.
+              </p>
+              <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">
+                A dedicated non-custodial order contract is required.
+              </p>
+              <p className="mt-3 text-xs leading-5 text-[var(--text-faint)]">
+                Missing source-backed capabilities:{" "}
+                {ARC_ORDER_SUPPORT.missingCapabilities.join(", ")}.
+              </p>
+            </section>
+          ) : null}
 
-                  void handleExecuteSell();
-                }}
-              >
-                <span className="inline-flex min-h-5 items-center justify-center">
-                  {actionButtonLabel}
-                </span>
-              </Button>
-              {activeDisabledReason ? (
-                <p className="text-sm leading-6 text-[var(--text-muted)]">{activeDisabledReason}</p>
-              ) : null}
-            </div>
+          {activeTab === "orders" ? (
+            <section className="rounded-[1.25rem] border border-[rgba(82,95,117,0.42)] bg-[rgba(255,255,255,0.02)] p-4">
+              <p className="text-base font-semibold text-white">Orders</p>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                No on-chain order system is deployed for this version of LibrARC.
+              </p>
+              <p className="mt-3 text-xs leading-5 text-[var(--text-faint)]">
+                Market trades are not displayed as open orders, and no mock order history is shown.
+              </p>
+            </section>
           ) : null}
 
           <FeedbackCard

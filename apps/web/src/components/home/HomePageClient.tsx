@@ -2,9 +2,8 @@
 
 import { useState } from "react";
 
-import { Features } from "./Features";
 import { Hero } from "./Hero";
-import { TrendingTokens } from "./TrendingTokens";
+import { LaunchBrowser } from "./LaunchBrowser";
 
 export function HomePageClient() {
   const [launchCount, setLaunchCount] = useState<number | null>(null);
@@ -12,8 +11,7 @@ export function HomePageClient() {
   return (
     <main className="flex-1">
       <Hero launchCount={launchCount} />
-      <Features />
-      <TrendingTokens onLaunchCountChange={setLaunchCount} />
+      <LaunchBrowser onLaunchCountChange={setLaunchCount} />
     </main>
   );
 }

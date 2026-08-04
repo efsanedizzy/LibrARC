@@ -1,4 +1,4 @@
-import { type Address } from "viem";
+import { type Address, type Hex } from "viem";
 
 export const ARC_TOKEN_API_ERROR_CODES = [
   "INVALID_ADDRESS",
@@ -27,6 +27,19 @@ export type ArcTokenApiError = {
 
 export type ArcTokenApiSuccess = {
   ok: true;
+  about: {
+    creator?: Address;
+    description?: string;
+    discord?: string;
+    image?: string;
+    launchId?: string;
+    marketCap?: string;
+    metadataHash?: Hex;
+    metadataUri?: string;
+    telegram?: string;
+    website?: string;
+    x?: string;
+  };
   token: {
     address: Address;
     name: string;

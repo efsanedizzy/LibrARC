@@ -10,13 +10,14 @@ import {
 import { NextResponse } from "next/server";
 
 import { erc20Abi, feeVaultAbi, launchFactoryAbi, launchPoolAbi, librarcTokenAbi } from "./abis";
-import { arcDeployment, parseAddress } from "./config";
+import { ARC_FACTORY_DEPLOYMENT_BLOCK, arcDeployment, parseAddress } from "./config";
 import { getGraduationPercentage, getPoolStatusLabel } from "./format";
 import { isArcRpcTransportFailure, toArcRpcErrorMessage } from "./rpc-errors";
 import { getArcTestnetServerPublicClient } from "./server-client";
 import { DecimalParseError, MAX_DECIMAL_INPUT_LENGTH, parseDecimalAmount } from "./trading";
 import { type ArcTokenApiErrorCode, type ArcTokenReadIssue } from "./token-api";
 import { type ArcSerializedCurveState, type ArcTradeApiErrorCode } from "./trade-api";
+import { parseLaunchMetadataUri } from "./launch-metadata";
 
 export const NO_STORE_HEADERS = {
   "cache-control": "no-store, max-age=0"
@@ -48,19 +49,30 @@ export type CanonicalTradeContext = {
 };
 
 export type ArcTokenRouteContext = CanonicalTradeContext & {
+  creator?: Address;
+  description?: string;
+  discord?: string;
   launchCount?: bigint;
+  launchId?: bigint;
+  marketCap?: bigint;
+  metadataHash?: Hex;
+  metadataUri?: string;
   paused?: boolean;
   feeVault?: Address;
+  image?: string;
   liquidityAdapter?: Address;
   liquidityRecipient?: Address;
+  telegram?: string;
   treasury?: Address;
   tokenBalance?: bigint;
   tokenAllowanceToPool?: bigint;
   usdcBalance?: bigint;
   usdcAllowanceToPool?: bigint;
+  website?: string;
   tokenName: string;
   tokenSymbol: string;
   tokenTotalSupply: bigint;
+  x?: string;
   poolCanBuy: boolean;
   poolCanSell: boolean;
   poolBuysPaused: boolean;
@@ -77,6 +89,28 @@ export type ArcTokenRouteContext = CanonicalTradeContext & {
   poolStatus: number;
   poolQuoteAsset: Address;
   remainingGraduationCapacity: bigint;
+};
+
+const ROUTE_LOG_BLOCK_RANGE = 10_000n;
+const ROUTE_LOG_BLOCK_CHUNK_SIZE = ROUTE_LOG_BLOCK_RANGE - 1n;
+const launchCreatedEvent = launchFactoryAbi.find(
+  (entry) => entry.type === "event" && entry.name === "LaunchCreated"
+);
+
+if (!launchCreatedEvent || launchCreatedEvent.type !== "event") {
+  throw new Error("LaunchCreated event is missing from the LaunchFactory ABI.");
+}
+
+type LaunchCreatedRouteLog = {
+  args?: {
+    creator?: Address;
+    launchId?: bigint;
+    launchPool?: Address;
+    launchToken?: Address;
+    metadataHash?: Hex;
+    metadataUri?: string;
+  };
+  blockNumber?: bigint | null;
 };
 
 function toErrorMessage(error: unknown, fallback: string) {
@@ -237,6 +271,18 @@ export async function optionalRead<T>(label: string, read: () => Promise<T>) {
 
 export function toBigIntString(value: bigint) {
   return value.toString(10);
+}
+
+function getRouteChunkToBlock({
+  chunkStart,
+  latestBlock
+}: {
+  chunkStart: bigint;
+  latestBlock: bigint;
+}) {
+  const candidate = chunkStart + ROUTE_LOG_BLOCK_CHUNK_SIZE;
+
+  return candidate > latestBlock ? latestBlock : candidate;
 }
 
 export function serializeCurveState(state: {
@@ -514,6 +560,82 @@ export async function loadArcTokenRouteData({
 }) {
   const context = await resolveCanonicalTradeContext({ tokenAddress, walletAddress });
   const { client, poolAddress } = context;
+  const latestBlockResult = await optionalRead("Arc latest block", () => client.getBlockNumber());
+  let creator: Address | undefined;
+  let description: string | undefined;
+  let discord: string | undefined;
+  let image: string | undefined;
+  let launchId: bigint | undefined;
+  let marketCap: bigint | undefined;
+  let metadataHash: Hex | undefined;
+  let metadataUri: string | undefined;
+  let telegram: string | undefined;
+  let website: string | undefined;
+  let x: string | undefined;
+
+  if (
+    latestBlockResult.value !== undefined &&
+    latestBlockResult.value >= ARC_FACTORY_DEPLOYMENT_BLOCK
+  ) {
+    let chunkStart = ARC_FACTORY_DEPLOYMENT_BLOCK;
+
+    while (chunkStart <= latestBlockResult.value) {
+      const toBlock = getRouteChunkToBlock({
+        chunkStart,
+        latestBlock: latestBlockResult.value
+      });
+      const launchLogsResult = await optionalRead(
+        `Factory LaunchCreated logs ${chunkStart}-${toBlock}`,
+        () =>
+          client.getLogs({
+            address: arcDeployment.factoryAddress,
+            event: launchCreatedEvent,
+            args: {
+              launchToken: tokenAddress
+            },
+            fromBlock: chunkStart,
+            toBlock
+          })
+      );
+
+      if (launchLogsResult.warning) {
+        latestBlockResult.warning = latestBlockResult.warning ?? launchLogsResult.warning;
+      }
+
+      const matchingLog = (launchLogsResult.value as LaunchCreatedRouteLog[] | undefined)?.find(
+        (log) =>
+          log.args?.launchToken === tokenAddress &&
+          log.args.launchPool === poolAddress &&
+          log.args.creator !== undefined
+      );
+
+      if (matchingLog?.args) {
+        creator = matchingLog.args.creator;
+        launchId = matchingLog.args.launchId;
+        metadataHash = matchingLog.args.metadataHash;
+        metadataUri = matchingLog.args.metadataUri;
+
+        if (metadataUri) {
+          const parsedMetadata = parseLaunchMetadataUri(metadataUri);
+
+          description = parsedMetadata.description;
+          discord = parsedMetadata.discord;
+          image = parsedMetadata.image;
+          telegram = parsedMetadata.telegram;
+          website = parsedMetadata.website;
+          x = parsedMetadata.x;
+        }
+
+        break;
+      }
+
+      if (toBlock === latestBlockResult.value) {
+        break;
+      }
+
+      chunkStart = toBlock + 1n;
+    }
+  }
 
   const [
     tokenName,
@@ -710,6 +832,7 @@ export async function loadArcTokenRouteData({
   const warnings: ArcTokenReadIssue[] = [];
 
   for (const warning of [
+    latestBlockResult.warning,
     launchCountResult.warning,
     pausedResult.warning,
     feeVaultResult.warning,
@@ -726,21 +849,48 @@ export async function loadArcTokenRouteData({
     }
   }
 
+  if (
+    tokenTotalSupply !== undefined &&
+    poolCurveState.realUsdcReserve !== undefined &&
+    poolCurveState.realTokenReserve !== undefined &&
+    poolCurveState.virtualUsdcReserve !== undefined &&
+    poolCurveState.virtualTokenReserve !== undefined
+  ) {
+    const effectiveUsdcReserve = poolCurveState.realUsdcReserve + poolCurveState.virtualUsdcReserve;
+    const effectiveTokenReserve =
+      poolCurveState.realTokenReserve + poolCurveState.virtualTokenReserve;
+
+    if (effectiveTokenReserve > 0n) {
+      marketCap = (tokenTotalSupply * effectiveUsdcReserve) / effectiveTokenReserve;
+    }
+  }
+
   return {
     ...context,
+    creator,
+    description,
+    discord,
     launchCount: launchCountResult.value,
+    launchId,
+    marketCap,
+    metadataHash,
+    metadataUri,
     paused: pausedResult.value,
     feeVault: feeVaultResult.value,
+    image,
     liquidityAdapter: liquidityAdapterResult.value,
     liquidityRecipient: liquidityRecipientResult.value,
+    telegram,
     treasury: treasuryResult.value,
     tokenBalance: tokenBalanceResult.value,
     tokenAllowanceToPool: tokenAllowanceResult.value,
     usdcBalance: usdcBalanceResult.value,
     usdcAllowanceToPool: usdcAllowanceResult.value,
+    website,
     tokenName,
     tokenSymbol,
     tokenTotalSupply,
+    x,
     poolFactory,
     poolFeeVault,
     poolStatus: Number(poolStatus),

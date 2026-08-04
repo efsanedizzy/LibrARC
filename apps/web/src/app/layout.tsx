@@ -13,7 +13,22 @@ export const metadata: Metadata = {
     template: "%s | LibrARC"
   },
   description:
-    "Discover, launch, and monitor Arc Testnet tokens through a refined crypto-native interface."
+    "Discover, launch, and monitor Arc Testnet tokens through a refined crypto-native interface.",
+  icons: {
+    icon: [
+      {
+        type: "image/png",
+        url: "/librarc-logo.png"
+      }
+    ],
+    shortcut: ["/librarc-logo.png"],
+    apple: [
+      {
+        type: "image/png",
+        url: "/librarc-logo.png"
+      }
+    ]
+  }
 };
 
 export default function RootLayout({

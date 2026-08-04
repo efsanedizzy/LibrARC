@@ -5,7 +5,13 @@ import { launchFactoryAbi } from "./abis";
 export type CompactLaunchMetadata = {
   description?: string;
   name: string;
+  socials?: {
+    discord?: string;
+    telegram?: string;
+    x?: string;
+  };
   symbol: string;
+  website?: string;
 };
 
 export type LaunchMetadataInput = {
@@ -36,10 +42,15 @@ export type CreatorInitialPurchaseExecutedEventResult = {
 
 export type ParsedLaunchMetadata = {
   description?: string;
+  discord?: string;
+  image?: string;
+  telegram?: string;
+  website?: string;
   warning?: {
     label: string;
     message: string;
   };
+  x?: string;
 };
 
 type WalletReceiptLog = {
@@ -91,6 +102,58 @@ export function buildLaunchMetadata(input: LaunchMetadataInput) {
   };
 }
 
+function trimOptionalString(value: unknown, maxLength: number) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return trimmed.slice(0, maxLength);
+}
+
+function normalizeHttpUrl(value: unknown) {
+  const trimmed = trimOptionalString(value, 2_048);
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmed);
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+
+    url.hash = "";
+
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeDomainUrl(value: unknown, allowedHosts: readonly string[]) {
+  const normalized = normalizeHttpUrl(value);
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  const hostname = new URL(normalized).hostname.toLowerCase();
+
+  if (!allowedHosts.some((host) => hostname === host || hostname.endsWith(`.${host}`))) {
+    return undefined;
+  }
+
+  return normalized;
+}
+
 export function exceedsLaunchMetadataLimit(actualLength: number, maxLength: number | null) {
   if (maxLength === null) {
     return false;
@@ -135,11 +198,46 @@ export function parseLaunchMetadataUri(
     const decodedPayload = decodeURIComponent(encodedPayload);
     const parsed = JSON.parse(decodedPayload) as {
       description?: unknown;
+      discord?: unknown;
+      discordUrl?: unknown;
+      image?: unknown;
+      socials?: {
+        discord?: unknown;
+        telegram?: unknown;
+        x?: unknown;
+      };
+      telegram?: unknown;
+      telegramUrl?: unknown;
+      twitter?: unknown;
+      twitterUrl?: unknown;
+      website?: unknown;
+      websiteUrl?: unknown;
+      x?: unknown;
+      xUrl?: unknown;
     };
+    const description = trimOptionalString(parsed.description, 500);
+    const image = normalizeHttpUrl(parsed.image);
+    const website = normalizeHttpUrl(parsed.website ?? parsed.websiteUrl);
+    const x = normalizeDomainUrl(
+      parsed.socials?.x ?? parsed.x ?? parsed.xUrl ?? parsed.twitter ?? parsed.twitterUrl,
+      ["twitter.com", "x.com"]
+    );
+    const telegram = normalizeDomainUrl(
+      parsed.socials?.telegram ?? parsed.telegram ?? parsed.telegramUrl,
+      ["t.me", "telegram.me"]
+    );
+    const discord = normalizeDomainUrl(
+      parsed.socials?.discord ?? parsed.discord ?? parsed.discordUrl,
+      ["discord.com", "discord.gg"]
+    );
 
     return {
-      description:
-        typeof parsed.description === "string" ? parsed.description.trim() || undefined : undefined
+      description,
+      discord,
+      image,
+      telegram,
+      website,
+      x
     };
   } catch {
     return {

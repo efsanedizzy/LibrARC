@@ -25,17 +25,17 @@ type NativeButtonProps = CommonButtonProps &
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    "bg-cyan-300 text-slate-950 shadow-[0_18px_48px_rgba(34,211,238,0.24)] hover:bg-cyan-200 focus-visible:outline-cyan-200",
+    "bg-[var(--accent)] text-white hover:bg-[var(--accent-strong)] focus-visible:outline-[var(--accent-strong)]",
   secondary:
-    "border border-white/12 bg-white/8 text-white hover:border-cyan-300/50 hover:bg-white/12 focus-visible:outline-cyan-300",
+    "border border-[var(--border-soft)] bg-[var(--bg-elevated)] text-white hover:border-[var(--border-strong)] hover:bg-[var(--bg-surface-strong)] focus-visible:outline-[var(--accent-strong)]",
   ghost:
-    "border border-transparent bg-transparent text-slate-200 hover:border-white/10 hover:bg-white/8 hover:text-white focus-visible:outline-cyan-300"
+    "border border-transparent bg-transparent text-[var(--text-secondary)] hover:border-[var(--border-soft)] hover:bg-[var(--bg-surface)] hover:text-white focus-visible:outline-[var(--accent-strong)]"
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: "min-h-10 px-4 text-sm",
-  md: "min-h-11 px-5 text-sm sm:text-base",
-  lg: "min-h-12 px-6 text-base"
+  sm: "min-h-9 px-3.5 text-sm",
+  md: "min-h-10 px-4.5 text-sm sm:text-[0.95rem]",
+  lg: "min-h-11 px-5 text-base"
 };
 
 function getButtonClassName({
@@ -45,7 +45,7 @@ function getButtonClassName({
   variant = "primary"
 }: CommonButtonProps) {
   return [
-    "inline-flex items-center justify-center gap-2 rounded-full font-semibold tracking-tight transition focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/6 disabled:text-slate-500",
+    "inline-flex items-center justify-center gap-2 rounded-[0.9rem] font-semibold tracking-tight transition focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:border-[var(--border-soft)] disabled:bg-[var(--bg-surface)] disabled:text-[var(--text-faint)]",
     variantClasses[variant],
     sizeClasses[size],
     fullWidth ? "w-full" : "",

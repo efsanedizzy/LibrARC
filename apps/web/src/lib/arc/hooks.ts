@@ -8,6 +8,8 @@ import { ARC_TESTNET_CHAIN_ID, arcDeployment, parseAddress } from "./config";
 import {
   buildExplorerAddressUrl,
   formatCompactAddress,
+  formatCompactLaunchTokenAmount,
+  formatCompactUsdcAmount,
   formatLaunchTokenAmount,
   formatPercentage,
   formatUsdcAmount,
@@ -340,6 +342,8 @@ export {
   ARC_TESTNET_CHAIN_ID,
   arcDeployment,
   formatCompactAddress,
+  formatCompactLaunchTokenAmount,
+  formatCompactUsdcAmount,
   formatLaunchTokenAmount,
   formatPercentage,
   formatUsdcAmount,

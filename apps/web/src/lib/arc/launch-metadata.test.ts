@@ -374,3 +374,63 @@ test("malformed metadata uri payloads are handled safely", () => {
     "The metadata URI could not be decoded as trusted JSON display text."
   );
 });
+
+test("accepts normalized website and social metadata links", () => {
+  const parsed = parseLaunchMetadataUri(
+    `data:application/json,${encodeURIComponent(
+      JSON.stringify({
+        description: "  Arc launch  ",
+        socials: {
+          discord: "https://discord.gg/librarc",
+          telegram: "https://t.me/librarc",
+          x: "https://x.com/librarc"
+        },
+        website: "https://librarc.app/path#hash"
+      })
+    )}`
+  );
+
+  assert.equal(parsed.description, "Arc launch");
+  assert.equal(parsed.website, "https://librarc.app/path");
+  assert.equal(parsed.x, "https://x.com/librarc");
+  assert.equal(parsed.telegram, "https://t.me/librarc");
+  assert.equal(parsed.discord, "https://discord.gg/librarc");
+});
+
+test("supports legacy metadata aliases for x, telegram, discord, and website", () => {
+  const parsed = parseLaunchMetadataUri(
+    `data:application/json,${encodeURIComponent(
+      JSON.stringify({
+        discordUrl: "https://discord.com/invite/librarc",
+        telegramUrl: "https://telegram.me/librarc",
+        twitterUrl: "https://twitter.com/librarc",
+        websiteUrl: "https://app.librarc.xyz"
+      })
+    )}`
+  );
+
+  assert.equal(parsed.website, "https://app.librarc.xyz/");
+  assert.equal(parsed.x, "https://twitter.com/librarc");
+  assert.equal(parsed.telegram, "https://telegram.me/librarc");
+  assert.equal(parsed.discord, "https://discord.com/invite/librarc");
+});
+
+test("rejects invalid protocols and mismatched social domains safely", () => {
+  const parsed = parseLaunchMetadataUri(
+    `data:application/json,${encodeURIComponent(
+      JSON.stringify({
+        description: "<b>Arc launch</b>",
+        discord: "javascript:alert(1)",
+        telegram: "https://example.com/not-telegram",
+        twitter: "data:text/plain,hello",
+        website: "file:///unsafe/path"
+      })
+    )}`
+  );
+
+  assert.equal(parsed.description, "<b>Arc launch</b>");
+  assert.equal(parsed.website, undefined);
+  assert.equal(parsed.x, undefined);
+  assert.equal(parsed.telegram, undefined);
+  assert.equal(parsed.discord, undefined);
+});
